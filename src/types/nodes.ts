@@ -5,7 +5,7 @@ export interface Message {
   id?: string;
   role: 'user' | 'assistant';
   content: string;
-  timestamp: number | Date;
+  timestamp: number;
   from?: string;
   to?: string;
   status?: 'sent' | 'delivered' | 'failed';
@@ -28,7 +28,7 @@ export interface AINodeData {
   temperature?: number;
   systemPrompt?: string;
   messages: Message[];
-  connectedNodes: Set<string>;
+  connectedNodes: string[];
   role?: string;
   name?: string;
 }

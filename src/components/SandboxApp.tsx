@@ -142,7 +142,7 @@ export function SandboxApp() {
       status: 'active',
       lastSeen: new Date(),
       capabilities: ['text-generation', 'chat'],
-      connectedNodes: new Set(),
+      connectedNodes: [],
       isParent: false,
       role: 'worker'
     };
@@ -162,7 +162,7 @@ export function SandboxApp() {
         name: newAgent.name,
         model: newAgent.model,
         provider: newAgent.provider,
-        connectedNodes: new Set(),
+        connectedNodes: [],
         messages: [],
         role: newAgent.role,
         apiKey: '',

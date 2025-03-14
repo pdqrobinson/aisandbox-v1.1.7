@@ -1,31 +1,32 @@
-export interface SharedMessage {
-  id: string;
-  from: string;
-  to: string;
-  content: string;
-  timestamp: number;
-  status: 'sent' | 'delivered' | 'failed';
-  role: 'user' | 'assistant';
-}
+import { Message, SharedMessage } from '../types/sandbox';
+
+export type { SharedMessage };
 
 class MessageBus {
   private subscribers: ((message: SharedMessage) => void)[] = [];
-  private messageHistory: SharedMessage[] = [];
 
   subscribe(callback: (message: SharedMessage) => void) {
     this.subscribers.push(callback);
     return () => {
-      this.subscribers = this.subscribers.filter(sub => sub !== callback);
+      this.subscribers = this.subscribers.filter(cb => cb !== callback);
     };
   }
 
-  sendMessage(message: SharedMessage) {
-    this.messageHistory.push(message);
-    this.subscribers.forEach(callback => callback(message));
-  }
+  async sendMessage(message: Message | SharedMessage) {
+    // Ensure message has all required fields for SharedMessage
+    const sharedMessage: SharedMessage = {
+      id: message.id,
+      role: message.role,
+      content: message.content,
+      timestamp: message.timestamp,
+      from: message.from || 'system',
+      to: message.to || 'all',
+      status: message.status || 'sent',
+      metadata: message.metadata
+    };
 
-  getMessageHistory(): SharedMessage[] {
-    return this.messageHistory;
+    // Notify all subscribers
+    this.subscribers.forEach(callback => callback(sharedMessage));
   }
 }
 

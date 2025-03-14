@@ -1,11 +1,4 @@
-export interface AIRole {
-  id: string;
-  name: string;
-  description: string;
-  responsibilities: string[];
-  allowedInteractions: string[];
-  systemPrompt: string;
-}
+import { AIRole } from '../types/sandbox';
 
 export const DEFAULT_ROLES: AIRole[] = [
   {
@@ -21,14 +14,12 @@ export const DEFAULT_ROLES: AIRole[] = [
       'Error Handling: Manage and respond to system issues',
       'Coordination of Actions: Ensure workers operate harmoniously'
     ],
-    allowedInteractions: [
-      'assign_task',
-      'monitor_status',
-      'allocate_resources',
-      'make_decisions',
-      'collect_feedback',
-      'handle_errors',
-      'coordinate_actions'
+    constraints: [
+      'Must maintain task order',
+      'Cannot override worker autonomy',
+      'Must respect system resource limits',
+      'Must follow error handling protocols',
+      'Must maintain audit logs'
     ],
     systemPrompt: `You are a Coordinator in a collaborative AI environment. Your role is to oversee and optimize the overall structure and flow of activities.
 
@@ -61,13 +52,12 @@ You should:
       'Problem Solving: Adapt to changing conditions',
       'Continuous Learning: Improve performance over time'
     ],
-    allowedInteractions: [
-      'execute_task',
-      'interact_with_nodes',
-      'report_status',
-      'collaborate',
-      'solve_problems',
-      'learn_and_improve'
+    constraints: [
+      'Must follow Coordinator instructions',
+      'Cannot modify other workers',
+      'Must report task status regularly',
+      'Must maintain task history',
+      'Must respect node boundaries'
     ],
     systemPrompt: `You are a Worker in a collaborative AI environment. Your role is to execute specific tasks and contribute to system goals.
 
@@ -97,7 +87,13 @@ You should:
       'Provide detailed feedback',
       'Suggest improvements'
     ],
-    allowedInteractions: ['review_work', 'provide_feedback', 'suggest_improvements'],
+    constraints: [
+      'Must maintain objectivity',
+      'Cannot modify work directly',
+      'Must provide actionable feedback',
+      'Must follow review guidelines',
+      'Must document review decisions'
+    ],
     systemPrompt: `You are a Reviewer in a collaborative AI environment. Your role is to:
 1. Review submitted work
 2. Provide detailed feedback
@@ -115,55 +111,105 @@ You should:
 export class AIRoleManager {
   private static instance: AIRoleManager;
   private roles: Map<string, AIRole> = new Map();
-  private roleAssignments: Map<string, string> = new Map(); // nodeId -> roleId
 
   private constructor() {
-    DEFAULT_ROLES.forEach(role => this.roles.set(role.id, role));
+    this.initializeDefaultRoles();
   }
 
-  static getInstance(): AIRoleManager {
+  private initializeDefaultRoles() {
+    const defaultRoles: AIRole[] = [
+      {
+        id: 'coordinator',
+        name: 'Coordinator',
+        description: 'Coordinates and manages communication between nodes',
+        responsibilities: [
+          'Manage message flow between nodes',
+          'Ensure proper task distribution',
+          'Monitor node performance'
+        ],
+        constraints: [
+          'Must maintain message order',
+          'Cannot modify message content',
+          'Must respect node capabilities'
+        ],
+        systemPrompt: 'You are a coordinator node responsible for managing communication.'
+      },
+      {
+        id: 'worker',
+        name: 'Worker',
+        description: 'Executes specific tasks within the sandbox environment',
+        responsibilities: [
+          'Task Execution: Follow Coordinator instructions',
+          'Node Interaction: Process and respond to messages',
+          'Status Reporting: Provide feedback on task progress',
+          'Collaboration: Work with other nodes when needed'
+        ],
+        constraints: [
+          'Must follow Coordinator instructions',
+          'Cannot modify other nodes directly',
+          'Must report task status',
+          'Must maintain task history'
+        ],
+        systemPrompt: `You are a Worker node in a collaborative AI environment. Your role is to:
+1. Execute tasks as instructed
+2. Process and respond to messages
+3. Provide status updates
+4. Collaborate with other nodes
+5. Maintain task history
+
+Focus on:
+- Following instructions precisely
+- Providing clear responses
+- Reporting any issues
+- Working efficiently with others`
+      },
+      {
+        id: 'processor',
+        name: 'Processor',
+        description: 'Processes and analyzes messages',
+        responsibilities: [
+          'Analyze message content',
+          'Extract key information',
+          'Generate appropriate responses'
+        ],
+        constraints: [
+          'Must preserve message context',
+          'Cannot exceed processing time limits',
+          'Must maintain accuracy standards'
+        ],
+        systemPrompt: 'You are a processor node responsible for analyzing and responding to messages.'
+      }
+    ];
+
+    defaultRoles.forEach(role => {
+      this.roles.set(role.id, role);
+    });
+  }
+
+  public static getInstance(): AIRoleManager {
     if (!AIRoleManager.instance) {
       AIRoleManager.instance = new AIRoleManager();
     }
     return AIRoleManager.instance;
   }
 
-  assignRole(nodeId: string, roleId: string): void {
-    if (this.roles.has(roleId)) {
-      this.roleAssignments.set(nodeId, roleId);
+  public getRole(nodeId: string): AIRole | undefined {
+    return this.roles.get(nodeId);
+  }
+
+  public assignRole(nodeId: string, roleId: string) {
+    const role = this.roles.get(roleId);
+    if (role) {
+      this.roles.set(nodeId, {
+        ...role,
+        id: nodeId
+      });
     }
   }
 
-  getRole(nodeId: string): AIRole | undefined {
-    const roleId = this.roleAssignments.get(nodeId);
-    return roleId ? this.roles.get(roleId) : undefined;
-  }
-
-  getSystemPrompt(nodeId: string): string {
-    const role = this.getRole(nodeId);
-    return role?.systemPrompt || '';
-  }
-
-  canInteract(sourceNodeId: string, targetNodeId: string, interactionType: string): boolean {
-    const sourceRole = this.getRole(sourceNodeId);
-    return sourceRole?.allowedInteractions.includes(interactionType) || false;
-  }
-
-  getAvailableRoles(): AIRole[] {
+  public getAvailableRoles(): AIRole[] {
     return Array.from(this.roles.values());
   }
+}
 
-  addRole(role: AIRole): void {
-    this.roles.set(role.id, role);
-  }
-
-  removeRole(roleId: string): void {
-    this.roles.delete(roleId);
-    // Remove role assignments for this role
-    Array.from(this.roleAssignments.entries()).forEach(([nodeId, assignedRoleId]) => {
-      if (assignedRoleId === roleId) {
-        this.roleAssignments.delete(nodeId);
-      }
-    });
-  }
-} 
+export const roleManager = AIRoleManager.getInstance(); 

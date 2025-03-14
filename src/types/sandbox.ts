@@ -72,20 +72,37 @@ export interface Rule {
   consequences: string[];
 }
 
-export interface BaseMessage {
+export interface Message {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   timestamp: number;
+  from?: string;
+  to?: string;
+  status?: 'sent' | 'delivered' | 'failed';
+  metadata?: {
+    role?: string;
+    parentRole?: string;
+    childRole?: string;
+    processingInstructions?: string;
+    [key: string]: any;
+  };
 }
 
-export interface Message extends BaseMessage {
+export interface SharedMessage extends Message {
   from: string;
   to: string;
   status: 'sent' | 'delivered' | 'failed';
 }
 
-export type SharedMessage = Message;
+export interface AIRole {
+  id: string;
+  name: string;
+  description: string;
+  responsibilities: string[];
+  constraints: string[];
+  systemPrompt?: string;
+}
 
 export interface ModelOption {
   id: string;

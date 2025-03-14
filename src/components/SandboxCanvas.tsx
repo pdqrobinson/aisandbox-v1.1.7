@@ -13,7 +13,6 @@ import 'reactflow/dist/style.css';
 import { Box, Button, Paper, Stack } from '@mui/material';
 import AINode from './AINode';
 import { useSandboxState } from '../services/SandboxState';
-import { AppHeader } from './AppHeader';
 
 const nodeTypes = {
   aiNode: AINode,
@@ -41,63 +40,64 @@ export function SandboxCanvas({
   const { getNode } = useReactFlow();
 
   return (
-    <Stack sx={{ width: '100vw', height: '100vh' }}>
-      {/* App Header */}
-      <AppHeader />
+    <Box sx={{ 
+      position: 'relative', 
+      width: '100%',
+      height: '100%',
+      flex: 1,
+      display: 'flex'
+    }}>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        nodeTypes={nodeTypes}
+        fitView
+        style={{ width: '100%', height: '100%' }}
+      >
+        <Background />
+        <Controls />
+        <MiniMap />
+      </ReactFlow>
       
-      {/* Main Content */}
-      <Box sx={{ position: 'relative', flexGrow: 1 }}>
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          nodeTypes={nodeTypes}
-          fitView
-        >
-          <Background />
-          <Controls />
-          <MiniMap />
-        </ReactFlow>
-        
-        {/* Control Panel */}
-        <Paper
-          elevation={3}
-          sx={{
-            position: 'absolute',
-            top: 20,
-            left: 20,
-            zIndex: 5,
-            padding: 2,
-            backgroundColor: 'background.paper',
-            borderRadius: 1
-          }}
-        >
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button 
-              variant="contained" 
-              onClick={onAddAgent}
-              sx={{
-                backgroundColor: 'primary.main',
-                '&:hover': {
-                  backgroundColor: 'primary.dark',
-                },
-                minWidth: '120px'
-              }}
-            >
-              Add Agent
-            </Button>
-            <Button 
-              variant="outlined" 
-              onClick={onResetSandbox}
-              sx={{ minWidth: '120px' }}
-            >
-              Reset Sandbox
-            </Button>
-          </Box>
-        </Paper>
-      </Box>
-    </Stack>
+      {/* Control Panel */}
+      <Paper
+        elevation={3}
+        sx={{
+          position: 'absolute',
+          top: 20,
+          left: 20,
+          zIndex: 5,
+          padding: 2,
+          backgroundColor: 'background.paper',
+          borderRadius: 1
+        }}
+      >
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button 
+            variant="contained" 
+            onClick={onAddAgent}
+            sx={{
+              backgroundColor: 'primary.main',
+              '&:hover': {
+                backgroundColor: 'primary.dark',
+              },
+              minWidth: '120px'
+            }}
+          >
+            Add Agent
+          </Button>
+          <Button 
+            variant="outlined" 
+            onClick={onResetSandbox}
+            sx={{ minWidth: '120px' }}
+          >
+            Reset Sandbox
+          </Button>
+        </Box>
+      </Paper>
+    </Box>
   );
 } 

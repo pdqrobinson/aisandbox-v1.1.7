@@ -8,7 +8,7 @@ export interface AIAgent {
   status: 'active' | 'inactive' | 'error';
   lastSeen: Date;
   capabilities: string[];
-  connectedNodes?: Set<string>;
+  connectedNodes?: string[];
   isParent?: boolean;
   role?: string;
   parentNodeId?: string | null;

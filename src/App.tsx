@@ -41,9 +41,18 @@ function App() {
       <ThemeProvider theme={theme}>
         <CssBaseline />
         <SandboxProvider>
-          <Box sx={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
+          <Box sx={{ 
+            display: 'flex', 
+            flexDirection: 'column', 
+            height: '100vh',
+            overflow: 'hidden'
+          }}>
             <AppHeader />
-            <Box sx={{ flexGrow: 1, overflow: 'hidden' }}>
+            <Box sx={{ 
+              flexGrow: 1, 
+              position: 'relative',
+              overflow: 'hidden'
+            }}>
               <SandboxApp />
             </Box>
           </Box>
