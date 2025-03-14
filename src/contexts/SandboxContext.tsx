@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useReducer, ReactNode } from 'react';
-import { SandboxState, SandboxConfig, Agent, Message, Rule } from '../types/sandbox';
+import { SandboxState, SandboxConfig, Agent, Message, Rule, DataInputNode } from '../types/sandbox';
 
 type SandboxAction =
   | { type: 'ADD_AGENT'; payload: Agent }
@@ -7,7 +7,11 @@ type SandboxAction =
   | { type: 'REMOVE_AGENT'; payload: string }
   | { type: 'ADD_MESSAGE'; payload: Message }
   | { type: 'ADD_RULE'; payload: Rule }
-  | { type: 'UPDATE_SANDBOX_CONFIG'; payload: Partial<SandboxConfig> };
+  | { type: 'UPDATE_SANDBOX_CONFIG'; payload: Partial<SandboxState> }
+  | { type: 'RESET_SANDBOX' }
+  | { type: 'ADD_DATA_INPUT'; payload: DataInputNode }
+  | { type: 'UPDATE_DATA_INPUT'; payload: DataInputNode }
+  | { type: 'REMOVE_DATA_INPUT'; payload: string };
 
 interface SandboxContextType {
   state: SandboxState;
@@ -26,15 +30,16 @@ const defaultConfig: SandboxConfig = {
 };
 
 const initialState: SandboxState = {
-  id: 'default-sandbox',
-  name: 'Default Sandbox',
-  description: 'A controlled environment for AI agents to interact',
+  id: 'sandbox-1',
+  name: 'AI Sandbox',
+  description: 'A sandbox environment for AI agents',
   createdAt: new Date(),
   updatedAt: new Date(),
   agents: [],
+  dataInputs: [],
   objects: [],
   rules: [],
-  messages: [],
+  messages: []
 };
 
 const SandboxContext = createContext<SandboxContextType | undefined>(undefined);
@@ -45,7 +50,7 @@ function sandboxReducer(state: SandboxState, action: SandboxAction): SandboxStat
       return {
         ...state,
         agents: [...state.agents, action.payload],
-        updatedAt: new Date(),
+        updatedAt: new Date()
       };
     case 'UPDATE_AGENT':
       return {
@@ -53,25 +58,58 @@ function sandboxReducer(state: SandboxState, action: SandboxAction): SandboxStat
         agents: state.agents.map(agent =>
           agent.id === action.payload.id ? action.payload : agent
         ),
-        updatedAt: new Date(),
+        updatedAt: new Date()
       };
     case 'REMOVE_AGENT':
       return {
         ...state,
         agents: state.agents.filter(agent => agent.id !== action.payload),
-        updatedAt: new Date(),
+        updatedAt: new Date()
       };
     case 'ADD_MESSAGE':
       return {
         ...state,
         messages: [...state.messages, action.payload],
-        updatedAt: new Date(),
+        updatedAt: new Date()
       };
     case 'ADD_RULE':
       return {
         ...state,
         rules: [...state.rules, action.payload],
-        updatedAt: new Date(),
+        updatedAt: new Date()
+      };
+    case 'UPDATE_SANDBOX_CONFIG':
+      return {
+        ...state,
+        ...action.payload,
+        updatedAt: new Date()
+      };
+    case 'RESET_SANDBOX':
+      return {
+        ...initialState,
+        id: state.id,
+        createdAt: state.createdAt,
+        updatedAt: new Date()
+      };
+    case 'ADD_DATA_INPUT':
+      return {
+        ...state,
+        dataInputs: [...state.dataInputs, action.payload],
+        updatedAt: new Date()
+      };
+    case 'UPDATE_DATA_INPUT':
+      return {
+        ...state,
+        dataInputs: state.dataInputs.map(node =>
+          node.id === action.payload.id ? action.payload : node
+        ),
+        updatedAt: new Date()
+      };
+    case 'REMOVE_DATA_INPUT':
+      return {
+        ...state,
+        dataInputs: state.dataInputs.filter(node => node.id !== action.payload),
+        updatedAt: new Date()
       };
     default:
       return state;

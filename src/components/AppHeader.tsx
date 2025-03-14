@@ -1,10 +1,10 @@
 import React from 'react';
 import { AppBar, Toolbar, Typography, Box, Chip, IconButton, Tooltip } from '@mui/material';
-import { Refresh as RefreshIcon, WifiOff as WifiOffIcon, Wifi as WifiIcon } from '@mui/icons-material';
-import { useSandboxState } from '../services/SandboxState';
+import { Refresh as RefreshIcon, WifiOff as WifiOffIcon, Wifi as WifiIcon, Hub as HubIcon } from '@mui/icons-material';
+import { useSandbox } from '../contexts/SandboxContext';
 
 export function AppHeader() {
-  const { getActiveAgents } = useSandboxState();
+  const { state, dispatch } = useSandbox();
   const [isConnected, setIsConnected] = React.useState(false);
   const [lastCheckedTimestamp, setLastCheckedTimestamp] = React.useState<number | null>(null);
 
@@ -29,7 +29,11 @@ export function AppHeader() {
     return new Date(timestamp).toLocaleTimeString();
   };
 
-  const activeAgents = getActiveAgents();
+  const handleRefresh = () => {
+    dispatch({ type: 'RESET_SANDBOX' });
+  };
+
+  const activeAgents = state.agents.filter(agent => agent.status === 'active');
 
   return (
     <AppBar 
@@ -43,13 +47,16 @@ export function AppHeader() {
       }}
     >
       <Toolbar sx={{ minHeight: 64 }}>
-        <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-          AI Sandbox
-        </Typography>
-        
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+          <HubIcon sx={{ color: 'primary.main' }} />
+          <Typography variant="h6" component="div">
+            AI Sandbox
+          </Typography>
+        </Box>
+
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, ml: 'auto' }}>
           <Chip
-            icon={<WifiIcon />}
+            icon={<HubIcon />}
             label={`${activeAgents.length} Active Agents`}
             color="primary"
             variant="outlined"
@@ -74,6 +81,16 @@ export function AppHeader() {
             </Tooltip>
           </Box>
           
+          <Tooltip title="Reset Sandbox">
+            <IconButton 
+              size="small"
+              onClick={handleRefresh}
+              color="primary"
+            >
+              <RefreshIcon />
+            </IconButton>
+          </Tooltip>
+
           {lastCheckedTimestamp && (
             <Typography variant="caption" color="text.secondary">
               Last checked: {formatTimestamp(lastCheckedTimestamp)}

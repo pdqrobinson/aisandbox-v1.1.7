@@ -1,12 +1,19 @@
 import React from 'react';
 import { Node, Edge, NodeChange, EdgeChange, Connection, useNodesState, useEdgesState, useReactFlow, addEdge, applyNodeChanges, applyEdgeChanges } from 'reactflow';
-import { useSandboxState } from '../services/SandboxState';
-import { AIAgent } from '../services/SandboxState';
+import { useSandbox } from '../contexts/SandboxContext';
 import { NodeConnectionDialog } from './NodeConnectionDialog';
 import { SandboxCanvas } from './SandboxCanvas';
+import { Agent, AgentPersonality, DataInputNode } from '../types/sandbox';
+import { getPersonalityConfig } from '../services/PersonalityService';
+
+export interface NodeConnectionDialogProps {
+  nodeId: string;
+  open: boolean;
+  onClose: () => void;
+}
 
 export function SandboxApp() {
-  const { updateAgent, addAgent } = useSandboxState();
+  const { state, dispatch } = useSandbox();
   const [nodes, setNodes, onNodesChange] = useNodesState([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState([]);
   const [selectedNodeId, setSelectedNodeId] = React.useState<string | null>(null);
@@ -53,7 +60,7 @@ export function SandboxApp() {
               ...node,
               data: {
                 ...node.data,
-                connectedNodes: new Set([...node.data.connectedNodes, target]),
+                connectedNodes: [...(node.data.connectedNodes || []), target],
                 parentNodeId: target
               }
             };
@@ -63,7 +70,7 @@ export function SandboxApp() {
               ...node,
               data: {
                 ...node.data,
-                connectedNodes: new Set([...node.data.connectedNodes, source])
+                connectedNodes: [...(node.data.connectedNodes || []), source]
               }
             };
           }
@@ -71,22 +78,27 @@ export function SandboxApp() {
         });
       });
 
-      // Update the sandbox state
-      updateAgent(source, {
-        parentNodeId: target,
-        lastSeen: new Date()
-      });
+      // Update the agent in context
+      const sourceAgent = state.agents.find(a => a.id === source);
+      if (sourceAgent) {
+        dispatch({
+          type: 'UPDATE_AGENT',
+          payload: {
+            ...sourceAgent,
+            parentNodeId: target,
+            connectedNodes: [...(sourceAgent.connectedNodes || []), target]
+          }
+        });
+      }
     };
 
     const handleDisconnect = (event: CustomEvent<{ nodeId: string; parentNodeId: string }>) => {
       const { nodeId, parentNodeId } = event.detail;
       
-      // Remove the edge
       setEdges((eds) => eds.filter(edge => 
         !(edge.source === nodeId && edge.target === parentNodeId)
       ));
 
-      // Update the nodes
       setNodes((nds) => {
         return nds.map((node) => {
           if (node.id === nodeId) {
@@ -94,7 +106,7 @@ export function SandboxApp() {
               ...node,
               data: {
                 ...node.data,
-                connectedNodes: new Set([...node.data.connectedNodes].filter(id => id !== parentNodeId)),
+                connectedNodes: (node.data.connectedNodes || []).filter((id: string) => id !== parentNodeId),
                 parentNodeId: null
               }
             };
@@ -104,7 +116,7 @@ export function SandboxApp() {
               ...node,
               data: {
                 ...node.data,
-                connectedNodes: new Set([...node.data.connectedNodes].filter(id => id !== nodeId))
+                connectedNodes: (node.data.connectedNodes || []).filter((id: string) => id !== nodeId)
               }
             };
           }
@@ -112,11 +124,17 @@ export function SandboxApp() {
         });
       });
 
-      // Update the sandbox state
-      updateAgent(nodeId, {
-        parentNodeId: null,
-        lastSeen: new Date()
-      });
+      const agent = state.agents.find(a => a.id === nodeId);
+      if (agent) {
+        dispatch({
+          type: 'UPDATE_AGENT',
+          payload: {
+            ...agent,
+            parentNodeId: null,
+            connectedNodes: (agent.connectedNodes || []).filter(id => id !== parentNodeId)
+          }
+        });
+      }
     };
 
     window.addEventListener('node-connect-request' as any, handleConnectionRequest);
@@ -128,15 +146,21 @@ export function SandboxApp() {
       window.removeEventListener('node-connect' as any, handleConnect);
       window.removeEventListener('node-disconnect' as any, handleDisconnect);
     };
-  }, [setEdges, setNodes, updateAgent]);
+  }, [setEdges, setNodes, state.agents, dispatch]);
 
   const handleAddAgent = () => {
     // Generate a unique ID for the new agent
     const newAgentId = `agent-${Date.now()}`;
     
-    const newAgent: AIAgent = {
+    // Select a random personality type
+    const personalities: AgentPersonality[] = ['mentor', 'inventor', 'sassy', 'empathic', 'analyst'];
+    const randomPersonality = personalities[Math.floor(Math.random() * personalities.length)];
+    const personalityConfig = getPersonalityConfig(randomPersonality);
+    
+    const newAgent: Agent = {
       id: newAgentId,
-      name: `Agent ${nodes.length + 1}`, // More readable name based on count
+      name: `${personalityConfig.name} ${nodes.length + 1}`,
+      type: 'ai',
       model: 'command-a-03-2025',
       provider: 'Cohere',
       status: 'active',
@@ -144,32 +168,33 @@ export function SandboxApp() {
       capabilities: ['text-generation', 'chat'],
       connectedNodes: [],
       isParent: false,
-      role: 'worker'
+      role: 'worker',
+      personality: personalityConfig,
+      systemPrompt: personalityConfig.systemPrompt,
+      temperature: personalityConfig.type === 'inventor' ? 0.9 : 
+                  personalityConfig.type === 'sassy' ? 0.8 :
+                  personalityConfig.type === 'empathic' ? 0.7 :
+                  personalityConfig.type === 'analyst' ? 0.3 : 0.7
     };
 
-    // Add the agent to the sandbox state
-    addAgent(newAgent);
+    // Add the agent to context
+    dispatch({
+      type: 'ADD_AGENT',
+      payload: newAgent
+    });
     
     // Calculate a position that's offset from existing nodes
-    const defaultX = 100 + (nodes.length * 150); // Increased spacing
-    const defaultY = 100 + (nodes.length * 100); // Increased spacing
+    const defaultX = 100 + (nodes.length * 150);
+    const defaultY = 100 + (nodes.length * 100);
     
     const newNode = {
       id: newAgentId,
       type: 'aiNode',
       position: { x: defaultX, y: defaultY },
       data: {
-        name: newAgent.name,
-        model: newAgent.model,
-        provider: newAgent.provider,
-        connectedNodes: [],
+        ...newAgent,
         messages: [],
-        role: newAgent.role,
         apiKey: '',
-        temperature: 0.7,
-        systemPrompt: '',
-        isParent: false,
-        agent: newAgent // Add the full agent object to the node data
       }
     };
 
@@ -177,28 +202,19 @@ export function SandboxApp() {
   };
 
   const onConnect = React.useCallback((connection: Connection) => {
-    // Prevent self-connections
-    if (connection.source === connection.target) {
+    if (!connection.source || !connection.target || connection.source === connection.target) {
       return;
     }
 
-    // Get the source and target nodes
-    const sourceNode = getNode(connection.source!);
-    const targetNode = getNode(connection.target!);
+    const sourceNode = getNode(connection.source);
+    const targetNode = getNode(connection.target);
 
-    if (!sourceNode || !targetNode) {
+    if (!sourceNode || !targetNode || !targetNode.data.isParent) {
       return;
     }
 
-    // Only allow connections to parent nodes
-    if (!targetNode.data.isParent) {
-      return;
-    }
-
-    // Add the new edge
     setEdges((eds) => addEdge(connection, eds));
     
-    // Update connected nodes in the data
     setNodes((nds) => {
       return nds.map((node) => {
         if (node.id === connection.source) {
@@ -206,7 +222,7 @@ export function SandboxApp() {
             ...node,
             data: {
               ...node.data,
-              connectedNodes: new Set([...node.data.connectedNodes, connection.target]),
+              connectedNodes: [...(node.data.connectedNodes || []), connection.target],
               parentNodeId: connection.target
             }
           };
@@ -216,7 +232,7 @@ export function SandboxApp() {
             ...node,
             data: {
               ...node.data,
-              connectedNodes: new Set([...node.data.connectedNodes, connection.source])
+              connectedNodes: [...(node.data.connectedNodes || []), connection.source]
             }
           };
         }
@@ -224,16 +240,56 @@ export function SandboxApp() {
       });
     });
 
-    // Update the sandbox state
-    updateAgent(connection.source!, {
-      parentNodeId: connection.target!,
-      lastSeen: new Date()
-    });
-  }, [setEdges, setNodes, getNode, updateAgent]);
+    const sourceAgent = state.agents.find(a => a.id === connection.source);
+    if (sourceAgent) {
+      dispatch({
+        type: 'UPDATE_AGENT',
+        payload: {
+          ...sourceAgent,
+          parentNodeId: connection.target,
+          connectedNodes: [...(sourceAgent.connectedNodes || []), connection.target]
+        }
+      });
+    }
+  }, [setEdges, setNodes, getNode, state.agents, dispatch]);
 
   const handleResetSandbox = () => {
     setNodes([]);
     setEdges([]);
+    dispatch({ type: 'RESET_SANDBOX' });
+  };
+
+  const handleAddDataInput = () => {
+    const newNodeId = `data-input-${Date.now()}`;
+    
+    const newDataInput: DataInputNode = {
+      id: newNodeId,
+      name: `Data Input ${nodes.length + 1}`,
+      type: 'dataInput' as const,
+      contents: [],
+      connectedAgents: [],
+      status: 'idle',
+      lastUpdated: new Date()
+    };
+
+    // Add the data input to context
+    dispatch({
+      type: 'ADD_DATA_INPUT',
+      payload: newDataInput
+    });
+    
+    // Calculate a position that's offset from existing nodes
+    const defaultX = 100 + (nodes.length * 150);
+    const defaultY = 100 + (nodes.length * 100);
+    
+    const newNode = {
+      id: newNodeId,
+      type: 'dataInput',
+      position: { x: defaultX, y: defaultY },
+      data: newDataInput
+    };
+
+    setNodes((nds) => [...nds, newNode]);
   };
 
   return (
@@ -246,12 +302,13 @@ export function SandboxApp() {
         onConnect={onConnect}
         onAddAgent={handleAddAgent}
         onResetSandbox={handleResetSandbox}
+        onAddDataInput={handleAddDataInput}
       />
-      {selectedNodeId && (
+      {selectedNodeId && connectionDialogOpen && (
         <NodeConnectionDialog
+          nodeId={selectedNodeId}
           open={connectionDialogOpen}
           onClose={() => setConnectionDialogOpen(false)}
-          sourceNodeId={selectedNodeId}
         />
       )}
     </>

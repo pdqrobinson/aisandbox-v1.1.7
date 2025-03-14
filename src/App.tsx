@@ -24,41 +24,59 @@ import { AIAgent } from './services/SandboxState';
 import { SandboxProvider } from './contexts/SandboxContext';
 import { SandboxApp } from './components/SandboxApp';
 import { AppHeader } from './components/AppHeader';
+import { MainChat } from './components/MainChat';
+import { DataInputNode } from './components/DataInputNode';
 
 const theme = createTheme({
   palette: {
     mode: 'dark',
+    background: {
+      default: '#121212',
+      paper: '#1e1e1e',
+    },
   },
 });
 
 const nodeTypes = {
   aiNode: AINode,
+  dataInput: DataInputNode
 };
 
 function App() {
   return (
-    <ReactFlowProvider>
-      <ThemeProvider theme={theme}>
-        <CssBaseline />
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
+      <ReactFlowProvider>
         <SandboxProvider>
           <Box sx={{ 
-            display: 'flex', 
-            flexDirection: 'column', 
-            height: '100vh',
-            overflow: 'hidden'
+            height: '100vh', 
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+            bgcolor: 'background.default'
           }}>
             <AppHeader />
             <Box sx={{ 
-              flexGrow: 1, 
-              position: 'relative',
-              overflow: 'hidden'
+              flex: 1,
+              display: 'grid', 
+              gridTemplateColumns: '1fr 350px',
+              overflow: 'hidden',
             }}>
               <SandboxApp />
+              <Box sx={{ 
+                borderLeft: 1, 
+                borderColor: 'divider',
+                height: '100%',
+                overflow: 'hidden',
+                bgcolor: 'background.paper'
+              }}>
+                <MainChat />
+              </Box>
             </Box>
           </Box>
         </SandboxProvider>
-      </ThemeProvider>
-    </ReactFlowProvider>
+      </ReactFlowProvider>
+    </ThemeProvider>
   );
 }
 

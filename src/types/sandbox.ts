@@ -5,9 +5,28 @@ export interface SandboxState {
   createdAt: Date;
   updatedAt: Date;
   agents: Agent[];
+  dataInputs: DataInputNode[];
   objects: SandboxObject[];
   rules: Rule[];
   messages: Message[];
+}
+
+export type AgentPersonality = 
+  | 'mentor'      // Helpful Mentor: Knowledgeable, Supportive, Patient
+  | 'inventor'    // Quirky Inventor: Creative, Curious, Fun
+  | 'sassy'       // Sassy Companion: Confident, Direct, Humorous
+  | 'empathic'    // Empathic Listener: Compassionate, Understanding, Calm
+  | 'analyst'     // Logical Analyst: Objective, Precise, Structured
+;
+
+export interface PersonalityConfig {
+  type: AgentPersonality;
+  name: string;
+  description: string;
+  tone: string;
+  style: string;
+  systemPrompt: string;
+  behaviorRules: string[];
 }
 
 export interface Agent {
@@ -15,12 +34,19 @@ export interface Agent {
   name: string;
   type: 'ai' | 'human';
   model?: string;
+  provider?: string;
+  status: 'active' | 'inactive' | 'error';
+  lastSeen: Date;
   capabilities: string[];
-  state: AgentState;
-  position: Position;
-  awareness: Awareness;
-  parentNodeId?: string | null;
+  connectedNodes?: string[];
   isParent?: boolean;
+  role?: string;
+  parentNodeId?: string | null;
+  messages?: Message[];
+  apiKey?: string;
+  temperature?: number;
+  systemPrompt?: string;
+  personality?: PersonalityConfig;
 }
 
 export interface AgentState {
@@ -66,27 +92,24 @@ export interface SandboxObject {
 
 export interface Rule {
   id: string;
-  type: 'physical' | 'social' | 'communication' | 'ai';
-  description: string;
-  conditions: string[];
-  consequences: string[];
+  name: string;
+  type: 'communication' | 'behavior' | 'system';
+  condition: string;
+  action: string;
+  priority: number;
+  isEnabled: boolean;
 }
+
+export type MessageType = 'text' | 'command' | 'result' | 'error' | 'context_updated' | 'capability';
 
 export interface Message {
   id: string;
-  role: 'user' | 'assistant';
+  senderId: string;
+  receiverId?: string;
   content: string;
-  timestamp: number;
-  from?: string;
-  to?: string;
-  status?: 'sent' | 'delivered' | 'failed';
-  metadata?: {
-    role?: string;
-    parentRole?: string;
-    childRole?: string;
-    processingInstructions?: string;
-    [key: string]: any;
-  };
+  type: MessageType;
+  timestamp: Date;
+  metadata?: Record<string, any>;
 }
 
 export interface SharedMessage extends Message {
@@ -121,4 +144,53 @@ export interface SandboxConfig {
   physicsEnabled: boolean;
   communicationRules: Rule[];
   aiBehaviorRules: Rule[];
+}
+
+export type Capability = 
+  | 'process' // Can process messages and generate responses
+  | 'execute' // Can execute commands or actions
+  | 'route'   // Can route messages to other nodes
+  | 'monitor' // Can monitor and log system events
+  | 'control' // Can issue control commands
+  | 'learn'   // Can learn from interactions
+  | 'store'   // Can store and retrieve data
+  | 'analyze' // Can analyze data and provide insights
+  | 'custom'  // Custom capability (requires metadata)
+;
+
+export type EventType = 'message' | 'task' | 'status' | 'capability' | 'control' | 'context_updated';
+
+export interface EventMessage extends Message {
+  eventType: EventType;
+  topic?: string;
+}
+
+export type DataInputType = 'text' | 'url' | 'document';
+
+export interface DataInputContent {
+  id: string;
+  type: DataInputType;
+  content: string;
+  metadata: {
+    title?: string;
+    source?: string;
+    mimeType?: string;
+    timestamp: Date;
+    size?: number;
+  };
+  processed?: {
+    text: string;
+    summary?: string;
+    keyPoints?: string[];
+  };
+}
+
+export interface DataInputNode {
+  id: string;
+  name: string;
+  type: 'dataInput';
+  contents: DataInputContent[];
+  connectedAgents: string[];
+  status: 'idle' | 'processing' | 'error';
+  lastUpdated: Date;
 } 

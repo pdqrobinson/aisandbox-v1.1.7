@@ -28,23 +28,28 @@ import {
 } from '@mui/material';
 import { Send as SendIcon, Refresh as RefreshIcon } from '@mui/icons-material';
 import { Message, SharedMessage, ModelOption, Agent } from '../types/sandbox';
+import { EventMessage, EventType, MessageRole } from '../services/MessageBus';
 import { CohereClientV2 } from 'cohere-ai';
 import { useSandboxState, AIAgent } from '../services/SandboxState';
 import { AIRoleManager } from '../services/AIRoles';
 import { AgentBehaviorManager, AgentState } from '../services/AgentBehavior';
 import { format } from 'date-fns';
-import { NodeCommunicationService, NodeMessage, NodeConnection } from '../services/NodeCommunicationService';
+import { messageBus } from '../services/MessageBus';
 import { useSandbox } from '../contexts/SandboxContext';
 import { Node, Edge } from 'reactflow';
 
 interface AINodeData {
+  id: string;
   name: string;
+  type: string;
+  role?: string;
+  capabilities: string[];
+  status: 'active' | 'inactive' | 'error';
   agent: Agent;
   messages: Message[];
   apiKey?: string;
   temperature?: number;
   systemPrompt?: string;
-  role?: string;
   connectedNodes: string[];
 }
 
@@ -227,9 +232,6 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
   const [] = useState<Node[]>([]);
   const [] = useState<Edge[]>([]);
   const [] = useState(false);
-
-  // Initialize communication service
-  const nodeCommunication = useRef(NodeCommunicationService.getInstance());
 
   // Add effect to initialize role
   useEffect(() => {
@@ -433,7 +435,7 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
 
   // Handle new connections
   useEffect(() => {
-    if (data.connectedNodes && data.connectedNodes.length > 0) {
+    if (data.connectedNodes.length > 0) {
       // Create or update shared conversations
       data.connectedNodes.forEach(connectedNodeId => {
         const conversationId = [id, connectedNodeId].sort().join('-');
@@ -451,206 +453,130 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
         }
       });
     }
-  }, [data.connectedNodes, id]);
+  }, [data.connectedNodes]);
 
-  // Handle incoming messages for parent node
-  const handleIncomingMessage = async (message: NodeMessage) => {
-    // Skip if we've already processed this message
-    if (processedMessageIds.has(message.id)) {
-      return;
-    }
-
-    // Mark message as processed immediately to prevent loops
-    processedMessageIds.add(message.id);
-
-    const localMessage: Message = {
-      id: message.id,
-      from: message.from,
-      to: message.to,
-      role: message.metadata.role,
-      content: message.content,
-      timestamp: message.timestamp,
-      status: message.status === 'delivered' ? 'delivered' : message.status === 'failed' ? 'failed' : 'sent'
-    };
-
-    // Add to local messages
-    setMessages(prev => [...prev, localMessage]);
-
-    // Update shared conversations if needed
-    const conversationId = message.from;
-    const conversation = sharedConversations.get(conversationId) || {
-      id: conversationId,
-      participants: [id, message.from],
-      messages: [],
-      lastMessage: Date.now()
-    };
-
-    const newConversations = new Map(sharedConversations);
-    newConversations.set(conversationId, {
-      ...conversation,
-      messages: [...conversation.messages, localMessage],
-      lastMessage: Date.now()
-    });
-    setSharedConversations(newConversations);
-
-    // Process message if:
-    // 1. It's a user message and we're either:
-    //    - A child node receiving a transformed message
-    //    - A standalone node
-    // 2. It's an assistant message and the task isn't resolved
-    if ((message.metadata.role === 'user' && 
-         (!isParent && (message.metadata.processingInstructions === 'transformed_by_coordinator' || !parentNodeId))) ||
-        (message.metadata.role === 'assistant' && !message.metadata.isTaskResolved)) {
-      await processMessageWithAI(message);
-    }
-  };
-
-  // Update message subscription effect
+  // Add message to history
   useEffect(() => {
-    // Establish connections with connected nodes
-    if (data.connectedNodes) {
-      data.connectedNodes.forEach(targetId => {
-        const connection: NodeConnection = {
-          nodeId: targetId,
-          established: Date.now(),
-          active: true
+    if (data.messages.length > 0) {
+      const lastMessage = data.messages[data.messages.length - 1];
+      const conversationId = [id, lastMessage.senderId].sort().join('-');
+      
+      // Add to both shared conversations and local messages
+      setSharedConversations(prev => {
+        const newConversations = new Map(prev);
+        const conversation = newConversations.get(conversationId) || {
+          id: conversationId,
+          participants: [id, lastMessage.senderId],
+          messages: [],
+          lastMessage: new Date().getTime()
         };
-        nodeCommunication.current.establishConnection(connection);
+        
+        newConversations.set(conversationId, {
+          ...conversation,
+          messages: [...conversation.messages, lastMessage],
+          lastMessage: new Date().getTime()
+        });
+        return newConversations;
+      });
+
+      // Add to local messages if not already present
+      setMessages(prev => {
+        const messageExists = prev.some(m => m.id === lastMessage.id);
+        if (!messageExists) {
+          return [...prev, lastMessage];
+        }
+        return prev;
       });
     }
+  }, [data.messages, id]);
 
-    const unsubscribe = nodeCommunication.current.subscribe(id, async (message: NodeMessage) => {
-      // Skip if we've already processed this message
-      if (processedMessageIds.has(message.id)) {
-        return;
-      }
-
-      // Mark message as processed immediately to prevent loops
-      processedMessageIds.add(message.id);
-
-      // Always add incoming messages to local state
-      const localMessage: Message = {
-        id: message.id,
-        from: message.from,
-        to: message.to,
-        role: message.metadata.role,
-        content: message.content,
-        timestamp: message.timestamp,
-        status: message.status === 'delivered' ? 'delivered' : message.status === 'failed' ? 'failed' : 'sent'
-      };
-      setMessages(prev => [...prev, localMessage]);
-
-      // Process messages based on node role
-      if (message.metadata.role === 'user') {
-        if (isParent || (!isParent && !parentNodeId)) {
-          // Process with AI if we're a parent node or an independent node
-          await processMessageWithAI(message);
-        } else if (!isParent && parentNodeId) {
-          // Process as a child node
-          await handleChildTask(message);
-        }
-      }
-    });
-
-    return () => {
-      // Remove connections when component unmounts
-      if (data.connectedNodes) {
-        data.connectedNodes.forEach(targetId => {
-          nodeCommunication.current.removeConnection(targetId);
-        });
-      }
-      unsubscribe();
-    };
-  }, [id, isParent, parentNodeId, data.connectedNodes]);
-
-  // Update handleSendMessage to use NodeCommunicationService
-  const handleSendMessage = async () => {
-    if (!inputMessage.trim()) return;
-
-    try {
-      setLoading(true);
-
-      // Add user's message to local state immediately
-      const userMessage: Message = {
-        id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        from: id,
-        to: parentNodeId || '*',
-        role: 'user',
-        content: inputMessage,
-        timestamp: Date.now(),
-        status: 'sent'
-      };
-      setMessages(prev => [...prev, userMessage]);
-      setInputMessage('');
-
-      // If this is a parent node, send immediate acknowledgment
-      if (isParent) {
-        const ackMessage: Message = {
-          id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-          from: id,
-          to: userMessage.from,
-          role: 'assistant',
-          content: "I'll work on that request and delegate it appropriately.",
-          timestamp: Date.now(),
-          status: 'delivered'
-        };
-        setMessages(prev => [...prev, ackMessage]);
-
-        // Process and transform the message before sending to child nodes
-        await processAndTransformMessage(userMessage);
-      } else {
-        // For non-parent nodes, handle normally
-        const message: Omit<NodeMessage, 'id' | 'timestamp' | 'status'> = {
-          from: id,
-          to: parentNodeId || '*',
-          content: inputMessage,
-          type: parentNodeId ? 'direct' : 'broadcast',
-          metadata: {
-            role: 'user',
-            processingInstructions: undefined
-          }
-        };
-
-        const sentMessage = await nodeCommunication.current.sendMessage(message);
-        
-        // If this node has no parent, process with AI immediately
-        if (!parentNodeId) {
-          await processMessageWithAI(sentMessage);
-        }
-      }
-    } catch (error) {
-      console.error('Error sending message:', error);
-      setError('Failed to send message. Please try again.');
-    } finally {
-      setLoading(false);
+  // Initialize agent when component mounts
+  useEffect(() => {
+    behaviorManager.initializeAgent(id, id);
+    const state = behaviorManager.getAgentState(id);
+    if (state) {
+      setAgentState(state);
     }
-  };
+  }, [id]);
 
-  // New function to process and transform messages for child nodes
-  const processAndTransformMessage = async (originalMessage: Message) => {
+  // Handle incoming messages for parent node
+  const handleIncomingMessage = useCallback(async (message: EventMessage) => {
+    if (message.receiverId !== id && message.receiverId !== 'all') return;
+
+    // Check if we have the required capabilities to handle this message
+    const eventType = message.eventType;
+    let canHandle = false;
+
+    switch (eventType) {
+      case 'message':
+        canHandle = data.capabilities.includes('process');
+        break;
+      case 'task':
+        canHandle = data.capabilities.includes('execute');
+        break;
+      case 'control':
+        canHandle = data.capabilities.includes('control');
+        break;
+      case 'status':
+        canHandle = data.capabilities.includes('monitor');
+        break;
+      default:
+        canHandle = false;
+    }
+
+    if (!canHandle) return;
+
+    // Convert EventMessage to Message for local storage
+    const newMessage: Message = {
+      id: message.id,
+      senderId: message.senderId,
+      receiverId: message.receiverId,
+      content: message.content,
+      type: message.type,
+      timestamp: new Date(message.timestamp),
+      metadata: {
+        ...message.metadata,
+        role: message.role,
+        status: message.status
+      }
+    };
+
+    setMessages(prev => [...prev, newMessage]);
+
+    // Process message based on capabilities
+    if (data.capabilities.includes('process')) {
+      await processMessageWithAI(message);
+    }
+
+    if (data.capabilities.includes('route')) {
+      const targetNodes = data.connectedNodes;
+      targetNodes.forEach(nodeId => {
+        messageBus.emit('message', {
+          id: `${id}-${Date.now()}`,
+          senderId: id,
+          receiverId: nodeId,
+          from: id,
+          to: nodeId,
+          content: message.content,
+          type: 'text',
+          timestamp: new Date(),
+          role: 'assistant' as MessageRole,
+          status: 'sent',
+          metadata: {
+            routed: true,
+            originalSender: message.senderId
+          }
+        });
+      });
+    }
+  }, [id, data.capabilities, data.connectedNodes]);
+
+  const processMessageWithAI = async (message: EventMessage) => {
     try {
       const selectedModelData = AVAILABLE_MODELS.find(m => m.id === selectedModel);
       if (!selectedModelData) {
         throw new Error('No model selected');
       }
-
-      // Get current role for context
-      const currentRole = roleManager.getRole(id);
-      const roleContext = currentRole ? 
-        `You are currently acting as: ${currentRole.name}\n${currentRole.description}\n\n` : '';
-
-      // Create a prompt that asks the AI to transform the message
-      const transformPrompt = `${roleContext}
-As a coordinator, analyze the following request and transform it into clear, actionable instructions for a worker node.
-Original request: "${originalMessage.content}"
-
-Your task is to:
-1. Understand the core objective
-2. Break it down into clear steps
-3. Add any necessary context or clarifications
-4. Format it as instructions for a worker node
-
-Respond with the transformed instructions only, no additional commentary.`;
 
       const response = await fetch('http://localhost:3002/api/cohere/chat', {
         method: 'POST',
@@ -659,15 +585,17 @@ Respond with the transformed instructions only, no additional commentary.`;
           'Authorization': `Bearer ${apiKey}`
         },
         body: JSON.stringify({
-          message: transformPrompt,
+          message: message.content,
           model: selectedModelData.model || 'command',
+          preamble: `${SANDBOX_CONTEXT}\n\n${selectedModelData.systemPrompt}`,
           temperature: temperature,
           stream: false
         })
       });
 
       if (!response.ok) {
-        throw new Error('Failed to transform message');
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API request failed: ${response.statusText}`);
       }
 
       const data = await response.json();
@@ -675,26 +603,193 @@ Respond with the transformed instructions only, no additional commentary.`;
         throw new Error('Invalid response from API');
       }
 
-      // Send transformed message to child nodes
-      const connectedNodes = nodeCommunication.current.getConnectedNodes();
-      if (connectedNodes && connectedNodes.length > 0) {
-        const transformedMessage: Omit<NodeMessage, 'id' | 'timestamp' | 'status'> = {
-          from: id,
-          to: '*', // Send to all connected child nodes
-          content: data.text,
-          type: 'direct',
+      // Send AI response
+      messageBus.emit('message', {
+        id: `${id}-${Date.now()}`,
+        senderId: id,
+        receiverId: message.senderId,
+        from: id,
+        to: message.senderId,
+        content: data.text,
+        type: 'text',
+        timestamp: new Date(),
+        role: 'assistant' as MessageRole,
+        status: 'delivered',
+        metadata: {}
+      });
+
+    } catch (error) {
+      console.error('Error processing message:', error);
+      // Send error message
+      messageBus.emit('message', {
+        id: `${id}-${Date.now()}`,
+        senderId: id,
+        receiverId: message.senderId,
+        from: id,
+        to: message.senderId,
+        content: 'Sorry, there was an error processing your message. Please try again.',
+        type: 'error',
+        timestamp: new Date(),
+        role: 'assistant' as MessageRole,
+        status: 'failed',
+        metadata: {}
+      });
+    }
+  };
+
+  // Handle tasks for child nodes
+  const handleChildTask = async (message: SharedMessage) => {
+    try {
+      const selectedModelData = AVAILABLE_MODELS.find(m => m.id === selectedModel);
+      if (!selectedModelData) {
+        throw new Error('Invalid model selected');
+      }
+
+      // Get the system prompt for this node's role
+      const roleSystemPrompt = selectedModelData.systemPrompt;
+
+      let result: string;
+      if (selectedModelData.provider === 'Cohere') {
+        const client = new CohereClientV2({ token: apiKey });
+        const response = await client.chat({
+          model: selectedModel,
+          messages: [
+            {
+              role: 'system',
+              content: `${SANDBOX_CONTEXT}\n\n${roleSystemPrompt}\n\nYou are a child node processing a specific task. Provide detailed and focused responses.`
+            },
+            {
+              role: 'user',
+              content: message.content
+            }
+          ],
+          temperature: temperature
+        });
+        result = response.message.content?.[0]?.text || 'No response from model';
+      } else {
+        throw new Error('OpenAI integration not implemented yet');
+      }
+
+      // Send result back to parent
+      const responseMessage: Message = {
+        id: `${id}-${Date.now()}`,
+        senderId: id,
+        receiverId: parentNodeId || '',
+        content: result,
+        type: 'text',
+        timestamp: new Date(),
+        metadata: {
+          role: 'assistant',
+          status: 'sent'
+        }
+      };
+
+      setMessages(prev => [...prev, responseMessage]);
+
+      // Update local messages with the response
+      const assistantMessage: Message = {
+        id: `${id}-${Date.now()}`,
+        senderId: id,
+        receiverId: parentNodeId || '',
+        content: result,
+        type: 'text',
+        timestamp: new Date(),
+        metadata: {
+          role: 'assistant',
+          status: 'sent'
+        }
+      };
+
+      const conversationId = message.senderId;
+      const conversation = sharedConversations.get(conversationId);
+      if (conversation) {
+        const newConversations = new Map(sharedConversations);
+        newConversations.set(conversationId, {
+          ...conversation,
+          messages: [...conversation.messages, assistantMessage],
+          lastMessage: Date.now()
+        });
+        setSharedConversations(newConversations);
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+      setMessageStats(prev => ({
+        ...prev,
+        failed: prev.failed + 1
+      }));
+    }
+  };
+
+  // Update message subscription effect
+  useEffect(() => {
+    const messageHandler = (message: EventMessage) => {
+      // Skip if we've already processed this message
+      if (processedMessageIds.has(message.id)) {
+        return;
+      }
+
+      // Mark message as processed immediately to prevent loops
+      processedMessageIds.add(message.id);
+
+      // Handle messages sent to this node
+      if (message.receiverId === id) {
+        // Convert EventMessage to Message format for local display
+        const localMessage: Message = {
+          id: message.id,
+          senderId: message.senderId,
+          receiverId: message.receiverId,
+          content: message.content,
+          type: message.type,
+          timestamp: new Date(message.timestamp),
           metadata: {
-            role: 'user',
-            processingInstructions: 'transformed_by_coordinator',
-            originalMessage: originalMessage.content
+            role: message.role,
+            status: message.status
           }
         };
 
-        await nodeCommunication.current.sendMessage(transformedMessage);
+        // Add to local messages
+        setMessages(prev => [...prev, localMessage]);
+
+        // Update message stats
+        setMessageStats(prev => ({
+          ...prev,
+          total: prev.total + 1,
+          successful: prev.successful + 1
+        }));
+
+        // Process messages based on node role
+        if (!isParent && parentNodeId) {
+          // Child node processing
+          handleChildTask(message);
+        } else if (isParent && data.connectedNodes.length > 0) {
+          // Parent node processing
+          handleIncomingMessage(message);
+        }
       }
-    } catch (error) {
-      console.error('Error transforming message:', error);
-      setError('Failed to transform and delegate message. Please try again.');
+    };
+
+    messageBus.subscribe(id, messageHandler);
+    return () => messageBus.unsubscribe(id, messageHandler);
+  }, [id, processedMessageIds, isParent, parentNodeId, data.connectedNodes]);
+
+  // Update handleSendMessage to work with parent-child relationship
+  const handleSendMessage = async () => {
+    if (inputMessage.trim()) {
+      const targetId = parentNodeId || '';
+      messageBus.emit('message', {
+        id: `${id}-${Date.now()}`,
+        senderId: id,
+        receiverId: targetId,
+        from: id,
+        to: targetId,
+        content: inputMessage,
+        type: 'text',
+        timestamp: new Date(),
+        role: 'user' as MessageRole,
+        status: 'sent',
+        metadata: {}
+      });
+      setInputMessage('');
     }
   };
 
@@ -718,11 +813,12 @@ Respond with the transformed instructions only, no additional commentary.`;
     handleModelClose();
   };
 
+  // Update message stats
   const updateMessageStats = useCallback(() => {
-    const allMessages = data.messages.filter(m => m.role === 'assistant');
+    const allMessages = data.messages.filter(m => m.metadata?.role === 'assistant');
     setMessageStats({
-      successful: allMessages.filter(m => m.status === 'delivered').length,
-      failed: allMessages.filter(m => m.status === 'failed').length,
+      successful: allMessages.filter(m => m.metadata?.status === 'delivered').length,
+      failed: allMessages.filter(m => m.metadata?.status === 'failed').length,
       total: allMessages.length
     });
   }, [data.messages]);
@@ -754,237 +850,6 @@ Respond with the transformed instructions only, no additional commentary.`;
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Process messages with AI
-  const processMessageWithAI = async (message: NodeMessage) => {
-    try {
-      const selectedModelData = AVAILABLE_MODELS.find(m => m.id === selectedModel);
-      if (!selectedModelData) {
-        throw new Error('No model selected');
-      }
-
-      // Get current role for context
-      const currentRole = roleManager.getRole(id);
-      const roleContext = currentRole ? 
-        `You are currently acting as: ${currentRole.name}\n${currentRole.description}\n\n` : '';
-
-      // Add task resolution context to the prompt
-      const taskContext = `
-You are part of a network of AI nodes working together to solve tasks. Your role is to:
-1. Process the incoming message and determine if the task is fully resolved
-2. If the task is not resolved:
-   - Provide your contribution toward the solution
-   - Clearly indicate what aspects still need to be addressed
-   - Request specific information or actions needed from other nodes
-3. If the task is resolved:
-   - Provide the final solution
-   - Explicitly state "TASK_RESOLVED" at the end of your message
-
-Previous context: ${message.metadata.taskHistory || 'No previous context'}
-Current request: ${message.content}`;
-
-      const response = await fetch('http://localhost:3002/api/cohere/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${apiKey}`
-        },
-        body: JSON.stringify({
-          message: message.content,
-          model: selectedModelData.model || 'command',
-          preamble: `${roleContext}${taskContext}${selectedModelData.systemPrompt}`,
-          temperature: temperature,
-          stream: false
-        })
-      });
-
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `API request failed: ${response.statusText}`);
-      }
-
-      const data = await response.json();
-      if (!data.text) {
-        throw new Error('Invalid response from API');
-      }
-
-      // Check if the task is resolved
-      const isTaskResolved = data.text.includes('TASK_RESOLVED');
-
-      // Always add the AI response to local messages first
-      const localMessage: Message = {
-        id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        from: id,
-        to: message.from,
-        role: 'assistant',
-        content: data.text,
-        timestamp: Date.now(),
-        status: 'delivered'
-      };
-      setMessages(prev => [...prev, localMessage]);
-
-      // Update task history with the current interaction
-      const updatedTaskHistory = message.metadata.taskHistory 
-        ? `${message.metadata.taskHistory}\n\nNode ${id}: ${data.text}`
-        : `Node ${id}: ${data.text}`;
-
-      // If task is resolved and we have a parent node, send the final result up
-      if (isTaskResolved && parentNodeId) {
-        const finalMessage: Omit<NodeMessage, 'id' | 'timestamp' | 'status'> = {
-          from: id,
-          to: parentNodeId,
-          content: data.text,
-          type: 'direct',
-          metadata: {
-            role: 'assistant',
-            taskHistory: updatedTaskHistory,
-            isTaskResolved: true,
-            originalRequest: message.metadata.originalRequest || message.content,
-            finalResult: true // Mark this as the final result
-          }
-        };
-        await nodeCommunication.current.sendMessage(finalMessage);
-      } 
-      // Otherwise, if we have connected nodes and aren't a parent, continue the conversation
-      else if (!isTaskResolved && !isParent) {
-        const connectedNodes = nodeCommunication.current.getConnectedNodes();
-        if (connectedNodes && connectedNodes.length > 0) {
-          const aiMessage: Omit<NodeMessage, 'id' | 'timestamp' | 'status'> = {
-            from: id,
-            to: message.from,
-            content: data.text,
-            type: 'direct',
-            metadata: {
-              role: 'assistant',
-              taskHistory: updatedTaskHistory,
-              isTaskResolved: isTaskResolved,
-              originalRequest: message.metadata.originalRequest || message.content
-            }
-          };
-          await nodeCommunication.current.sendMessage(aiMessage);
-        }
-      }
-    } catch (error) {
-      console.error('Error processing message:', error);
-      
-      // Add error message to local messages
-      const localErrorMessage: Message = {
-        id: `local-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        from: id,
-        to: message.from,
-        role: 'assistant',
-        content: 'Sorry, there was an error processing your message. Please try again.',
-        timestamp: Date.now(),
-        status: 'failed'
-      };
-      setMessages(prev => [...prev, localErrorMessage]);
-
-      // Send error message if we have connected nodes
-      const connectedNodes = nodeCommunication.current.getConnectedNodes();
-      if (connectedNodes && connectedNodes.length > 0) {
-        const errorMessage: Omit<NodeMessage, 'id' | 'timestamp' | 'status'> = {
-          from: id,
-          to: message.from,
-          content: 'Sorry, there was an error processing your message. Please try again.',
-          type: 'direct',
-          metadata: {
-            role: 'assistant',
-            taskHistory: message.metadata.taskHistory,
-            isTaskResolved: false,
-            originalRequest: message.metadata.originalRequest
-          }
-        };
-        await nodeCommunication.current.sendMessage(errorMessage);
-      }
-    }
-  };
-
-  // Update handleChildTask to handle task resolution
-  const handleChildTask = async (message: NodeMessage) => {
-    try {
-      const selectedModelData = AVAILABLE_MODELS.find(m => m.id === selectedModel);
-      if (!selectedModelData) {
-        throw new Error('Invalid model selected');
-      }
-
-      // Get current role for context
-      const currentRole = roleManager.getRole(id);
-      const roleContext = currentRole ? 
-        `You are currently acting as: ${currentRole.name}\n${currentRole.description}\n\n` : '';
-
-      let result: string;
-      if (selectedModelData.provider === 'Cohere') {
-        const client = new CohereClientV2({ token: apiKey });
-        const response = await client.chat({
-          model: selectedModel,
-          messages: [
-            {
-              role: 'system',
-              content: `${SANDBOX_CONTEXT}\n\n${roleContext}\n\nYou are a child node processing a specific task. Provide detailed and focused responses. If you believe the task is complete, end your message with "TASK_RESOLVED".`
-            },
-            {
-              role: 'user',
-              content: message.content
-            }
-          ],
-          temperature: temperature
-        });
-        result = response.message.content?.[0]?.text || 'No response from model';
-      } else {
-        throw new Error('OpenAI integration not implemented yet');
-      }
-
-      const isTaskResolved = result.includes('TASK_RESOLVED');
-
-      // Send result back to parent
-      const responseMessage: Omit<NodeMessage, 'id' | 'timestamp' | 'status'> = {
-        from: id,
-        to: parentNodeId || 'unknown',
-        content: result,
-        type: 'direct',
-        metadata: {
-          role: 'assistant',
-          taskHistory: message.metadata.taskHistory 
-            ? `${message.metadata.taskHistory}\n\nNode ${id}: ${result}`
-            : `Node ${id}: ${result}`,
-          isTaskResolved: isTaskResolved,
-          originalRequest: message.metadata.originalRequest || message.content,
-          finalResult: isTaskResolved // Mark as final result if task is resolved
-        }
-      };
-
-      const sentMessage = await nodeCommunication.current.sendMessage(responseMessage);
-
-      // Add to local messages
-      const localMessage: Message = {
-        id: sentMessage.id,
-        from: sentMessage.from,
-        to: sentMessage.to,
-        role: 'assistant',
-        content: sentMessage.content,
-        timestamp: sentMessage.timestamp,
-        status: sentMessage.status === 'delivered' ? 'delivered' : sentMessage.status === 'failed' ? 'failed' : 'sent'
-      };
-
-      // Update shared conversations
-      const conversationId = message.from;
-      const conversation = sharedConversations.get(conversationId);
-      if (conversation) {
-        const newConversations = new Map(sharedConversations);
-        newConversations.set(conversationId, {
-          ...conversation,
-          messages: [...conversation.messages, localMessage],
-          lastMessage: Date.now()
-        });
-        setSharedConversations(newConversations);
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An error occurred');
-      setMessageStats(prev => ({
-        ...prev,
-        failed: prev.failed + 1
-      }));
-    }
-  };
 
   return (
     <Paper 
@@ -1142,29 +1007,23 @@ Current request: ${message.content}`;
               {(activeConversation 
                 ? sharedConversations.get(activeConversation)?.messages || []
                 : messages
-              )
-              .filter((message, index, self) => 
-                index === self.findIndex(m => m.id === message.id)
-              )
-              .map((message, index) => (
+              ).map((message, index) => (
                 <Box 
-                  key={`${message.id}-${index}`} 
+                  key={message.id || index} 
                   sx={{ 
                     mb: 1,
                     p: 1,
                     borderRadius: 1,
                     maxWidth: '90%',
-                    ml: message.role === 'assistant' ? 0 : 'auto',
-                    mr: message.role === 'assistant' ? 'auto' : 0,
-                    bgcolor: message.role === 'assistant' ? 'action.hover' : 'transparent',
+                    ml: message.metadata?.role === 'assistant' ? 0 : 'auto',
+                    mr: message.metadata?.role === 'assistant' ? 'auto' : 0,
+                    bgcolor: message.metadata?.role === 'assistant' ? 'action.hover' : 'transparent',
                     wordBreak: 'break-word',
                     overflowWrap: 'break-word'
                   }}
                 >
                   <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
-                    {message.from === id ? 
-                      `${getActiveAgents().find(a => a.id === id)?.name || 'This Node'}` : 
-                      `${getActiveAgents().find(a => a.id === message.from)?.name || 'Agent'} (${message.from})`}
+                    {message.metadata?.role === 'user' ? 'You' : message.senderId || 'Assistant'}
                   </Typography>
                   <Typography variant="body2">
                     {message.content}
@@ -1513,15 +1372,15 @@ Current request: ${message.content}`;
                 </Button>
               </Box>
               <List>
-                {data.messages.filter(m => m.role === 'assistant').map((message) => (
+                {data.messages.filter(m => m.metadata?.role === 'assistant').map((message) => (
                   <ListItem
                     key={message.id}
                     sx={{
                       mb: 1,
                       borderLeft: 4,
-                      borderColor: message.status === 'delivered' 
+                      borderColor: message.metadata?.status === 'delivered' 
                         ? 'success.main' 
-                        : message.status === 'failed'
+                        : message.metadata?.status === 'failed'
                         ? 'error.main'
                         : 'warning.main',
                       bgcolor: 'background.paper',
@@ -1532,17 +1391,17 @@ Current request: ${message.content}`;
                       primary={
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <Typography variant="subtitle2">
-                            {message.from === id ? 
-                              `To: Node ${message.to}` : 
-                              `From: Node ${message.from}`}
+                            {message.senderId === id ? 
+                              `To: ${message.receiverId}` : 
+                              `From: ${message.senderId}`}
                           </Typography>
                           <Chip
                             size="small"
-                            label={message.status}
+                            label={message.metadata?.status}
                             color={
-                              message.status === 'delivered' 
+                              message.metadata?.status === 'delivered' 
                                 ? 'success' 
-                                : message.status === 'failed'
+                                : message.metadata?.status === 'failed'
                                 ? 'error'
                                 : 'warning'
                             }
@@ -1555,12 +1414,12 @@ Current request: ${message.content}`;
                             {message.content}
                           </Typography>
                           <Typography variant="caption" color="text.secondary">
-                            {format(message.timestamp, 'MM/dd/yyyy HH:mm:ss')}
+                            {format(new Date(message.timestamp), 'MM/dd/yyyy HH:mm:ss')}
                           </Typography>
                         </Box>
                       }
                     />
-                    {message.status === 'failed' && (
+                    {message.metadata?.status === 'failed' && (
                       <ListItemSecondaryAction>
                         <Tooltip title="Retry sending message">
                           <IconButton

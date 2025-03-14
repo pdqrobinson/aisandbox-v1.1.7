@@ -10,9 +10,10 @@ import ReactFlow, {
   Connection
 } from 'reactflow';
 import 'reactflow/dist/style.css';
-import { Box, Button, Paper, Stack } from '@mui/material';
+import { Box, Button, Paper, Stack, ButtonGroup } from '@mui/material';
 import AINode from './AINode';
 import { useSandboxState } from '../services/SandboxState';
+import { Add as AddIcon, DataObject as DataIcon } from '@mui/icons-material';
 
 const nodeTypes = {
   aiNode: AINode,
@@ -26,6 +27,7 @@ interface SandboxCanvasProps {
   onConnect: (connection: Connection) => void;
   onAddAgent: () => void;
   onResetSandbox: () => void;
+  onAddDataInput?: () => void;
 }
 
 export function SandboxCanvas({
@@ -35,7 +37,8 @@ export function SandboxCanvas({
   onEdgesChange,
   onConnect,
   onAddAgent,
-  onResetSandbox
+  onResetSandbox,
+  onAddDataInput
 }: SandboxCanvasProps) {
   const { getNode } = useReactFlow();
 
@@ -76,19 +79,24 @@ export function SandboxCanvas({
         }}
       >
         <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button 
-            variant="contained" 
-            onClick={onAddAgent}
-            sx={{
-              backgroundColor: 'primary.main',
-              '&:hover': {
-                backgroundColor: 'primary.dark',
-              },
-              minWidth: '120px'
-            }}
-          >
-            Add Agent
-          </Button>
+          <ButtonGroup orientation="vertical">
+            <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={onAddAgent}
+            >
+              Add Agent
+            </Button>
+            {onAddDataInput && (
+              <Button
+                variant="contained"
+                startIcon={<DataIcon />}
+                onClick={onAddDataInput}
+              >
+                Add Data Input
+              </Button>
+            )}
+          </ButtonGroup>
           <Button 
             variant="outlined" 
             onClick={onResetSandbox}
