@@ -15,15 +15,17 @@ import {
 } from '@mui/material';
 import { Send as SendIcon, Monitor as MonitorIcon } from '@mui/icons-material';
 import { messageBus, EventMessage, EventType } from '../services/MessageBus';
+import { MessageType } from '../types/sandbox';
 import { format } from 'date-fns';
 
-interface LogEntry {
-  timestamp: number;
-  type: EventType;
-  content: string;
-  senderId: string;
-  receiverId?: string;
+interface LogEntry extends Omit<EventMessage, 'eventType'> {
+  eventType: EventType;
 }
+
+const MAIN_CHAT_ID = 'main-chat';
+
+// Define all event types we want to listen to
+const ALL_EVENT_TYPES: EventType[] = ['message', 'task', 'status', 'capability', 'control', 'context_updated'];
 
 export const MainChat: React.FC = () => {
   const [input, setInput] = useState('');
@@ -32,26 +34,26 @@ export const MainChat: React.FC = () => {
   const logsEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    // Subscribe to all messages using a main-chat node ID
-    const mainChatId = 'main-chat';
     const handleMessage = (message: EventMessage) => {
+      // Convert EventMessage to LogEntry
       const logEntry: LogEntry = {
-        timestamp: Date.now(),
-        type: message.eventType,
-        content: message.content,
-        senderId: message.senderId,
-        receiverId: message.receiverId
+        ...message,
+        timestamp: message.timestamp
       };
+      
       setLogs(prev => [...prev, logEntry]);
       
       // Update active nodes
-      setActiveNodes(prev => new Set([...prev, message.senderId]));
+      if (message.senderId !== MAIN_CHAT_ID) {
+        setActiveNodes(prev => new Set([...prev, message.senderId]));
+      }
     };
 
-    messageBus.subscribe(mainChatId, handleMessage);
+    // Subscribe to all event types
+    const unsubscribe = messageBus.subscribe(MAIN_CHAT_ID, ALL_EVENT_TYPES, handleMessage);
 
     return () => {
-      messageBus.unsubscribe(mainChatId, handleMessage);
+      unsubscribe();
     };
   }, []);
 
@@ -63,10 +65,32 @@ export const MainChat: React.FC = () => {
   const handleSendCommand = () => {
     if (!input.trim()) return;
 
-    messageBus.broadcastControl(input, {
-      source: 'main-chat',
-      timestamp: Date.now()
-    });
+    // Create the message
+    const message = {
+      id: `main-chat-${Date.now()}`,
+      senderId: MAIN_CHAT_ID,
+      receiverId: 'all',
+      from: MAIN_CHAT_ID,
+      to: 'all',
+      content: input,
+      type: 'text' as MessageType,
+      timestamp: new Date(),
+      status: 'sent' as const,
+      metadata: {
+        source: 'main-chat',
+        timestamp: Date.now(),
+        isCommand: true
+      }
+    };
+
+    // Emit the message
+    const sentMessage = messageBus.emit('message', message);
+
+    // Add our sent message to the logs
+    setLogs(prev => [...prev, {
+      ...sentMessage,
+      eventType: 'message'
+    }]);
 
     setInput('');
   };
@@ -119,9 +143,9 @@ export const MainChat: React.FC = () => {
                   primary={
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Chip
-                        label={log.type}
+                        label={log.eventType}
                         size="small"
-                        sx={{ backgroundColor: getEventColor(log.type), color: 'white' }}
+                        sx={{ backgroundColor: getEventColor(log.eventType), color: 'white' }}
                       />
                       <Typography variant="body2" color="textSecondary">
                         {format(log.timestamp, 'HH:mm:ss')}

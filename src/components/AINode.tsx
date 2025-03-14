@@ -723,40 +723,9 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
   // Update message subscription effect
   useEffect(() => {
     const messageHandler = (message: EventMessage) => {
-      // Skip if we've already processed this message
-      if (processedMessageIds.has(message.id)) {
-        return;
-      }
-
-      // Mark message as processed immediately to prevent loops
-      processedMessageIds.add(message.id);
-
-      // Handle messages sent to this node
-      if (message.receiverId === id) {
-        // Convert EventMessage to Message format for local display
-        const localMessage: Message = {
-          id: message.id,
-          senderId: message.senderId,
-          receiverId: message.receiverId,
-          content: message.content,
-          type: message.type,
-          timestamp: new Date(message.timestamp),
-          metadata: {
-            role: message.role,
-            status: message.status
-          }
-        };
-
-        // Add to local messages
-        setMessages(prev => [...prev, localMessage]);
-
-        // Update message stats
-        setMessageStats(prev => ({
-          ...prev,
-          total: prev.total + 1,
-          successful: prev.successful + 1
-        }));
-
+      if (!processedMessageIds.has(message.id)) {
+        processedMessageIds.add(message.id);
+        
         // Process messages based on node role
         if (!isParent && parentNodeId) {
           // Child node processing
@@ -768,8 +737,8 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
       }
     };
 
-    messageBus.subscribe(id, messageHandler);
-    return () => messageBus.unsubscribe(id, messageHandler);
+    const unsubscribe = messageBus.subscribe(id, messageHandler);
+    return () => unsubscribe();
   }, [id, processedMessageIds, isParent, parentNodeId, data.connectedNodes]);
 
   // Update handleSendMessage to work with parent-child relationship

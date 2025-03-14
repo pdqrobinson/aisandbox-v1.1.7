@@ -1,33 +1,57 @@
-import { Message, SharedMessage } from '../types/sandbox';
+import { Message, SharedMessage, EventType as SandboxEventType, MessageType, EventMessage as SandboxEventMessage } from '../types/sandbox';
 
-export type EventType = 'message' | 'task' | 'status' | 'capability' | 'control' | 'context_updated';
 export type MessageRole = 'user' | 'assistant' | 'system' | 'control';
-
-export interface EventMessage extends Omit<SharedMessage, 'role'> {
+export type EventType = SandboxEventType;
+export interface EventMessage extends SharedMessage {
   eventType: EventType;
   topic?: string;
-  capabilities?: string[];
-  role: MessageRole;
+}
+
+interface Subscription {
+  nodeId: string;
+  eventTypes: Set<EventType>;
+  callback: (message: EventMessage) => void;
 }
 
 class MessageBus {
-  private subscribers: Map<string, Set<(message: EventMessage) => void>>;
+  private subscriptions: Subscription[];
   private topics: Map<string, Set<string>>;
 
   constructor() {
-    this.subscribers = new Map();
+    this.subscriptions = [];
     this.topics = new Map();
   }
 
-  subscribe(nodeId: string, callback: (message: EventMessage) => void) {
-    if (!this.subscribers.has(nodeId)) {
-      this.subscribers.set(nodeId, new Set());
-    }
-    this.subscribers.get(nodeId)?.add(callback);
-  }
+  subscribe(
+    nodeId: string, 
+    eventTypesOrCallback: EventType[] | ((message: EventMessage) => void),
+    callback?: (message: EventMessage) => void
+  ): () => void {
+    let eventTypes: EventType[] = [];
+    let messageCallback: (message: EventMessage) => void;
 
-  unsubscribe(nodeId: string, callback: (message: EventMessage) => void) {
-    this.subscribers.get(nodeId)?.delete(callback);
+    if (typeof eventTypesOrCallback === 'function') {
+      messageCallback = eventTypesOrCallback;
+      eventTypes = ['message', 'task', 'status', 'capability', 'control', 'context_updated'];
+    } else {
+      eventTypes = eventTypesOrCallback;
+      messageCallback = callback!;
+    }
+
+    const subscription: Subscription = {
+      nodeId,
+      eventTypes: new Set(eventTypes),
+      callback: messageCallback
+    };
+    
+    this.subscriptions.push(subscription);
+    
+    // Return unsubscribe function
+    return () => {
+      this.subscriptions = this.subscriptions.filter(sub => 
+        sub.nodeId !== nodeId || sub.callback !== messageCallback
+      );
+    };
   }
 
   subscribeTopic(nodeId: string, topic: string) {
@@ -35,70 +59,105 @@ class MessageBus {
       this.topics.set(topic, new Set());
     }
     this.topics.get(topic)?.add(nodeId);
+    
+    return () => this.unsubscribeTopic(nodeId, topic);
   }
 
   unsubscribeTopic(nodeId: string, topic: string) {
     this.topics.get(topic)?.delete(nodeId);
+    if (this.topics.get(topic)?.size === 0) {
+      this.topics.delete(topic);
+    }
   }
 
-  emit(eventType: EventType, message: Omit<EventMessage, 'eventType'>) {
+  emit(eventType: EventType, message: Omit<SharedMessage, 'eventType'>) {
     const eventMessage: EventMessage = {
       ...message,
-      eventType
+      eventType,
+      id: message.id || `msg-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      senderId: message.senderId,
+      receiverId: message.receiverId,
+      from: message.from || message.senderId,
+      to: message.to || message.receiverId || '',
+      content: message.content,
+      type: message.type,
+      timestamp: message.timestamp || new Date(),
+      status: message.status || 'sent',
+      metadata: {
+        ...message.metadata,
+        emittedAt: Date.now(),
+        topic: (message as any).topic
+      }
     };
 
-    // Direct message to specific receiver
-    if (eventMessage.receiverId) {
-      this.subscribers.get(eventMessage.receiverId)?.forEach(callback => {
-        callback(eventMessage);
-      });
-    }
-
-    // Broadcast to topic subscribers if topic is specified
-    if (eventMessage.topic) {
-      const topicSubscribers = this.topics.get(eventMessage.topic);
-      if (topicSubscribers) {
-        topicSubscribers.forEach(subscriberId => {
-          if (subscriberId !== eventMessage.senderId) { // Don't send back to sender
-            this.subscribers.get(subscriberId)?.forEach(callback => {
-              callback(eventMessage);
-            });
-          }
-        });
+    // Find all relevant subscribers
+    const relevantSubscriptions = this.subscriptions.filter(sub => {
+      // Check if subscriber is interested in this event type
+      if (!sub.eventTypes.has(eventType)) {
+        return false;
       }
-    }
 
-    // Special handling for context updates
-    if (eventType === 'context_updated') {
-      // Broadcast to all connected nodes
-      this.subscribers.forEach((callbacks, nodeId) => {
-        if (nodeId !== eventMessage.senderId) {
-          callbacks.forEach(callback => {
-            callback(eventMessage);
-          });
-        }
-      });
-    }
-  }
+      // Don't send message back to sender
+      if (sub.nodeId === eventMessage.senderId) {
+        return false;
+      }
 
-  getSubscribers(nodeId: string) {
-    return this.subscribers.get(nodeId) || new Set();
-  }
+      // If message has a specific receiver, only send to that receiver
+      if (eventMessage.receiverId && sub.nodeId !== eventMessage.receiverId) {
+        return false;
+      }
 
-  getTopicSubscribers(topic: string) {
-    return this.topics.get(topic) || new Set();
+      // If message has a topic, check if subscriber is interested in that topic
+      const topic = eventMessage.metadata?.topic;
+      if (topic) {
+        const topicSubscribers = this.topics.get(topic);
+        return topicSubscribers?.has(sub.nodeId) ?? false;
+      }
+
+      return true;
+    });
+
+    // Notify all relevant subscribers
+    relevantSubscriptions.forEach(sub => {
+      try {
+        sub.callback(eventMessage);
+      } catch (error) {
+        console.error(`Error delivering message to node ${sub.nodeId}:`, error);
+      }
+    });
+
+    return eventMessage;
   }
 
   // Helper method to broadcast control messages
   broadcastControl(content: string, metadata: Record<string, any> = {}) {
-    this.emit('control', {
+    return this.emit('control', {
       id: `control-${Date.now()}`,
       senderId: 'system',
+      receiverId: undefined,
+      from: 'system',
+      to: '',
       content,
       type: 'command',
       timestamp: new Date(),
-      metadata
+      status: 'sent',
+      metadata: {
+        ...metadata,
+        isSystemMessage: true
+      }
     });
+  }
+
+  // Get all nodes subscribed to a specific event type
+  getSubscribersForEventType(eventType: EventType): string[] {
+    return this.subscriptions
+      .filter(sub => sub.eventTypes.has(eventType))
+      .map(sub => sub.nodeId);
+  }
+
+  // Get all nodes subscribed to a specific topic
+  getTopicSubscribers(topic: string): string[] {
+    return Array.from(this.topics.get(topic) || []);
   }
 }
 
