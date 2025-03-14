@@ -1025,30 +1025,38 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
       if (isNoteTakingEnabled && connectedNotesNodes.length > 0) {
         console.log('ChatNode: Note-taking mode active, sending to nodes:', connectedNotesNodes);
         
-        // Format the note content to include both question and answer
-        const noteContent = `Question: ${userMessage.content}\n\nAnswer: ${responseText}`;
-        
         // Send to all connected notes nodes
         let noteSent = false;
         for (const noteNodeId of connectedNotesNodes) {
           try {
             console.log('ChatNode: Sending note to node:', noteNodeId);
             
-            // Send the note draft
-            nodeMessageService.sendMessage({
-              senderId: id,
-              receiverId: noteNodeId,
-              type: 'note_draft',
-              content: noteContent,
-              metadata: {
-                timestamp: Date.now()
-              }
+            // Format the note content
+            const noteContent = `Q: ${userMessage.content}\nA: ${responseText}\n---\n`;
+            
+            // Get the current node data
+            const notesNode = getNode(noteNodeId);
+            if (!notesNode) {
+              throw new Error('Notes node not found');
+            }
+            
+            // Create new note object
+            const newNote = {
+              id: crypto.randomUUID(),
+              content: noteContent.trim()
+            };
+            
+            // Update the NotesNode data with the new note
+            const currentNotes = notesNode.data.notes || [];
+            updateNode(noteNodeId, {
+              ...notesNode.data,
+              notes: [...currentNotes, newNote]
             });
             
-            console.log('ChatNode: Successfully sent note');
+            console.log('ChatNode: Successfully updated notes array');
             noteSent = true;
           } catch (error) {
-            console.error('ChatNode: Error sending note:', error);
+            console.error('ChatNode: Error updating notes:', error);
           }
         }
 
@@ -1056,7 +1064,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         const confirmationMessage = {
           id: crypto.randomUUID(),
           role: 'assistant' as const,
-          content: noteSent ? "Note has been saved." : "Failed to save note.",
+          content: noteSent ? "Note has been saved to Notes node." : "Failed to save note.",
           timestamp: Date.now(),
         };
 

@@ -7,7 +7,7 @@ export interface NodeCapabilities {
   metadata?: Record<string, any>;
 }
 
-class NodeCapabilityService {
+export class NodeCapabilityService {
   private static instance: NodeCapabilityService;
   private nodeCapabilities: Map<string, Set<Capability>>;
 

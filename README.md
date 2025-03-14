@@ -1,70 +1,57 @@
 # AI Sandbox
 
-An interactive sandbox environment for AI agents using the Cohere API. This project allows you to create, connect, and interact with multiple AI agents in a visual interface.
+A React-based sandbox environment for AI interactions with various node types. This project provides a flexible interface for connecting different types of nodes (Chat, Notes, Image, Document, URL) and enabling communication between them.
 
 ## Features
 
-- Create and manage multiple AI agents
-- Visual node-based interface using React Flow
-- Real-time agent interactions
-- Connection status monitoring
-- Support for different AI roles and behaviors
-- Integration with Cohere's API
+- Interactive node-based interface
+- Multiple AI model support (Cohere, DeepSeek)
+- Note-taking functionality
+- Real-time node communication
+- Customizable system prompts
+- Temperature and token control
+- Error handling and validation
 
-## Prerequisites
+## Node Types
 
-- Node.js (v14 or higher)
-- npm (v6 or higher)
-- A Cohere API key
+- **Chat Node**: Main interface for AI interactions
+- **Notes Node**: Text-based notepad for storing information
+- **Image Node**: Handles image content and descriptions
+- **Document Node**: Manages document content and metadata
+- **URL Node**: Processes web content
 
 ## Setup
 
-1. Clone the repository:
-```bash
-git clone [your-repo-url]
-cd ai-sandbox
-```
-
+1. Clone the repository
 2. Install dependencies:
-```bash
-npm install
-```
-
-3. Create a `.env` file in the root directory and add your Cohere API key:
-```env
-COHERE_API_KEY=your-api-key-here
-```
+   ```bash
+   npm install
+   ```
+3. Set up your API keys:
+   - Cohere API key
+   - GitHub token (for DeepSeek)
 
 4. Start the development server:
-```bash
-npm run dev:all
-```
-
-This will start both the client (port 3000) and server (port 3002).
+   ```bash
+   npm start
+   ```
 
 ## Usage
 
-1. Open http://localhost:3000 in your browser
-2. Click "Add Agent" to create a new AI agent
-3. Configure the agent with your Cohere API key and desired settings
-4. Use the chat interface to interact with the agent
-5. Connect multiple agents to create an interactive network
+1. Add nodes to the canvas
+2. Connect nodes by dragging edges between them
+3. Configure the Chat node with your API keys
+4. Start interacting with the AI
+5. Enable note-taking mode to automatically save responses
 
-## Development
+## Contributing
 
-- Client: React + Vite + TypeScript
-- Server: Express.js
-- UI Components: Material-UI
-- Graph Visualization: React Flow
-- API Integration: Cohere
-
-## Scripts
-
-- `npm run dev:all` - Start both client and server in development mode
-- `npm run dev:client` - Start only the client
-- `npm run dev:server` - Start only the server
-- `npm run build` - Build the client for production
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
 ## License
 
-MIT 
+MIT License 

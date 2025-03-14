@@ -1,5 +1,5 @@
 # Dependencies
-node_modules/
+/node_modules
 /.pnp
 .pnp.js
 
@@ -31,6 +31,8 @@ yarn-error.log*
 *.njsproj
 *.sln
 *.sw?
+*.swp
+*.swo
 
 # OS generated files
 .DS_Store

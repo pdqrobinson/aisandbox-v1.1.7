@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { Node, Edge, Connection, XYPosition } from 'reactflow';
 import { v4 as uuidv4 } from 'uuid';
 import { NodeData, NodeType } from '../types/nodes';
-import { eventBus } from '../services/EventBus';
+import { messageBus } from '../services/MessageBus';
 
 interface CanvasState {
   nodes: Node<NodeData>[];
@@ -28,102 +28,177 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
       type,
       position,
       data: {
-        id: nodeId,
-        type,
-        label: `${type.charAt(0).toUpperCase() + type.slice(1)} Node`,
-        ...data,
-      },
+        label: `${type} ${nodeId.slice(0, 4)}`,
+        ...data
+      }
     };
 
-    set((state) => ({
-      nodes: [...state.nodes, newNode],
+    set(state => ({
+      nodes: [...state.nodes, newNode]
     }));
 
-    eventBus.emit({
-      type: 'update',
-      source: nodeId,
-      payload: { action: 'add', node: newNode },
+    // Emit node creation event
+    messageBus.emit('node_created', {
+      senderId: 'system',
+      content: `Node ${nodeId} created`,
+      type: 'system',
+      metadata: {
+        nodeId,
+        nodeType: type,
+        position,
+        data: newNode.data
+      }
     });
 
     return nodeId;
   },
 
   updateNode: (nodeId: string, data: Partial<NodeData>) => {
-    set((state) => ({
-      nodes: state.nodes.map((node) =>
+    set(state => ({
+      nodes: state.nodes.map(node =>
         node.id === nodeId
           ? { ...node, data: { ...node.data, ...data } }
           : node
-      ),
+      )
     }));
 
-    eventBus.emit({
+    // Emit content update event
+    messageBus.emit('content_updated', {
+      senderId: nodeId,
+      content: 'Node content updated',
       type: 'update',
-      source: nodeId,
-      payload: { action: 'update', data },
+      metadata: {
+        nodeId,
+        content: data,
+        timestamp: Date.now()
+      }
     });
   },
 
   removeNode: (nodeId: string) => {
-    set((state) => ({
-      nodes: state.nodes.filter((node) => node.id !== nodeId),
+    // Get connected edges before removing
+    const connectedEdges = get().edges.filter(
+      edge => edge.source === nodeId || edge.target === nodeId
+    );
+
+    // Remove connected edges first
+    connectedEdges.forEach(edge => {
+      messageBus.emit('disconnect', {
+        senderId: 'system',
+        content: 'Edge removed',
+        type: 'system',
+        metadata: {
+          source: edge.source,
+          target: edge.target
+        }
+      });
+    });
+
+    set(state => ({
+      nodes: state.nodes.filter(node => node.id !== nodeId),
       edges: state.edges.filter(
-        (edge) => edge.source !== nodeId && edge.target !== nodeId
-      ),
+        edge => edge.source !== nodeId && edge.target !== nodeId
+      )
     }));
 
-    eventBus.emit({
-      type: 'update',
-      source: nodeId,
-      payload: { action: 'remove' },
+    // Emit node deletion event
+    messageBus.emit('node_deleted', {
+      senderId: 'system',
+      content: `Node ${nodeId} deleted`,
+      type: 'system',
+      metadata: {
+        nodeId,
+        connectedEdges
+      }
     });
   },
 
   addEdge: (connection: Connection) => {
     const newEdge: Edge = {
-      ...connection,
-      id: uuidv4(),
+      id: `${connection.source}-${connection.target}`,
+      ...connection
     };
 
-    set((state) => ({
-      edges: [...state.edges, newEdge],
+    set(state => ({
+      edges: [...state.edges, newEdge]
     }));
 
-    eventBus.emit({
-      type: 'connect',
-      source: connection.source!,
-      target: connection.target!,
-      payload: { edge: newEdge },
+    // Emit connection event
+    messageBus.emit('connect', {
+      senderId: connection.source,
+      receiverId: connection.target,
+      content: 'Nodes connected',
+      type: 'connection',
+      metadata: {
+        source: connection.source,
+        target: connection.target,
+        edgeId: newEdge.id
+      }
     });
   },
 
   removeEdge: (edgeId: string) => {
-    const edge = get().edges.find((e) => e.id === edgeId);
-    if (!edge) return;
+    const edge = get().edges.find(e => e.id === edgeId);
+    if (edge) {
+      set(state => ({
+        edges: state.edges.filter(e => e.id !== edgeId)
+      }));
 
-    set((state) => ({
-      edges: state.edges.filter((e) => e.id !== edgeId),
-    }));
-
-    eventBus.emit({
-      type: 'disconnect',
-      source: edge.source,
-      target: edge.target,
-      payload: { edgeId },
-    });
+      // Emit disconnection event
+      messageBus.emit('disconnect', {
+        senderId: edge.source,
+        receiverId: edge.target,
+        content: 'Nodes disconnected',
+        type: 'connection',
+        metadata: {
+          source: edge.source,
+          target: edge.target,
+          edgeId
+        }
+      });
+    }
   },
 
   updateEdge: (edge: Edge) => {
-    set((state) => ({
-      edges: state.edges.map((e) => (e.id === edge.id ? edge : e)),
+    set(state => ({
+      edges: state.edges.map(e => (e.id === edge.id ? edge : e))
     }));
   },
 
   getNode: (nodeId: string) => {
-    return get().nodes.find((node) => node.id === nodeId);
+    return get().nodes.find(node => node.id === nodeId);
   },
 
   clear: () => {
+    const { nodes, edges } = get();
+    
+    // Emit disconnect events for all edges
+    edges.forEach(edge => {
+      messageBus.emit('disconnect', {
+        senderId: edge.source,
+        receiverId: edge.target,
+        content: 'Nodes disconnected',
+        type: 'connection',
+        metadata: {
+          source: edge.source,
+          target: edge.target,
+          edgeId: edge.id
+        }
+      });
+    });
+
+    // Emit delete events for all nodes
+    nodes.forEach(node => {
+      messageBus.emit('node_deleted', {
+        senderId: 'system',
+        content: `Node ${node.id} deleted`,
+        type: 'system',
+        metadata: {
+          nodeId: node.id
+        }
+      });
+    });
+
     set({ nodes: [], edges: [] });
-  },
+  }
 })); 
