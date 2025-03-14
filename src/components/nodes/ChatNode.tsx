@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef, Component } from 'react';
+import React, { useState, useCallback, useEffect, useRef, Component, useMemo } from 'react';
 import { NodeProps, useReactFlow } from 'reactflow';
 import {
   Box,
@@ -22,11 +22,14 @@ import {
   InputAdornment,
   ListSubheader,
 } from '@mui/material';
-import { Send as SendIcon, Settings as SettingsIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { Send as SendIcon, Settings as SettingsIcon, Refresh as RefreshIcon, Delete as DeleteIcon, ContentCopy as ContentCopyIcon, Recycling as RecyclingIcon } from '@mui/icons-material';
 import { BaseNode } from './BaseNode';
 import { ChatNodeData } from '../../types/nodes';
 import { useCanvasStore } from '../../store/canvasStore';
 import { messageBus } from '../../services/MessageBus';
+import { NodeCommunicationService } from '../../services/NodeCommunicationService';
+import { nodeCapabilityService } from '../../services/NodeCapabilityService';
+import { nodeMessageService } from '../../services/NodeMessageService';
 
 const DEEPSEEK_MODELS = [
   'deepseek-coder-6.7b-instruct',
@@ -44,7 +47,7 @@ type Provider = 'cohere' | 'deepseek';
 
 const PROVIDERS = [
   { value: 'cohere' as Provider, label: 'Cohere', apiUrl: 'https://dashboard.cohere.com/api-keys' },
-  { value: 'deepseek' as Provider, label: 'DeepSeek', apiUrl: 'https://github.com/settings/tokens' }
+  { value: 'deepseek' as Provider, label: 'DeepSeek (GitHub Token)', apiUrl: 'https://github.com/settings/tokens/new?description=DeepSeek%20API%20Access' }
 ] as const;
 
 const DEFAULT_ENVIRONMENT_PROMPT = `You are an AI assistant in a sandbox environment with the following capabilities:
@@ -136,6 +139,23 @@ const MODEL_OPTIONS = [
   }
 ] as const;
 
+// Update the ErrorMessage component to not use ListItem
+const ErrorMessage = ({ message }: { message: string }) => (
+  <Paper
+    sx={{
+      p: 1,
+      bgcolor: 'error.main',
+      color: 'error.contrastText',
+      display: 'flex',
+      alignItems: 'center',
+      gap: 1,
+      width: '100%'
+    }}
+  >
+    <Typography variant="body2">{message}</Typography>
+  </Paper>
+);
+
 export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, selected }) => {
   // Ensure data has default values
   const safeData = {
@@ -165,45 +185,362 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
   const [notesContext, setNotesContext] = useState<string | null>(null);
   const [modelSelectOpen, setModelSelectOpen] = useState(false);
 
-  // Define getEnvironmentContext first
-  const getEnvironmentContext = useCallback(() => {
-    const edges = getEdges();
-    const connectedNodes = edges
-      .filter(edge => edge.target === id)
-      .map(edge => getNode(edge.source))
-      .filter(Boolean);
+  // Add new state for connected nodes
+  const [connectedNodes, setConnectedNodes] = useState<Map<string, any>>(new Map());
+  const nodeCommunicationService = useMemo(() => NodeCommunicationService.getInstance(), []);
+
+  // Add state for tracking context updates
+  const [isUpdatingContext, setIsUpdatingContext] = useState(false);
+  const contextUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Add state for note-taking mode
+  const [isNoteTakingEnabled, setIsNoteTakingEnabled] = useState(false);
+
+  // Add this near the top of the component with other state declarations
+  const hasConnectedNotesNode = useMemo(() => {
+    return Array.from(connectedNodes.entries())
+      .some(([_, nodeData]) => nodeData.type === 'notesNode' || nodeData.type === 'notes');
+  }, [connectedNodes]);
+
+  // Initialize node communication and capabilities
+  useEffect(() => {
+    try {
+      // Register node capabilities
+      nodeCapabilityService.registerCapabilities(id, [{
+        type: 'chat',
+        metadata: {
+          provider: safeData.settings.provider,
+          model: safeData.settings.model
+        }
+      }]);
+
+      // Initialize connected nodes from existing edges
+      const edges = getEdges();
+      const initialConnectedNodes = new Map();
+      
+      try {
+        edges.forEach(edge => {
+          if (edge.source === id || edge.target === id) {
+            const connectedId = edge.source === id ? edge.target : edge.source;
+            const connectedNode = getNode(connectedId);
+            if (connectedNode) {
+              initialConnectedNodes.set(connectedId, {
+                type: connectedNode.type,
+                nodeId: connectedId,
+                capabilities: nodeCapabilityService.getCapabilities(connectedId) || []
+              });
+            }
+          }
+        });
+      } catch (error) {
+        console.error('Error initializing connected nodes:', error);
+      }
+
+      setConnectedNodes(initialConnectedNodes);
+
+      // Subscribe to events with error handling
+      const unsubscribe = nodeCommunicationService.subscribeToEvents(
+        id,
+        ['message', 'update', 'connect', 'disconnect', 'context_updated'],
+        (message) => {
+          try {
+            console.log('ChatNode received message:', message);
+            
+            switch (message.eventType) {
+              case 'connect':
+                if (message.metadata?.target === id) {
+                  handleNodeConnection(message.senderId, message.metadata);
+                }
+                break;
+              case 'disconnect':
+                if (message.metadata?.target === id) {
+                  handleNodeDisconnection(message.senderId);
+                }
+                break;
+              case 'update':
+                if (message.metadata?.type === 'content' && connectedNodes.has(message.senderId)) {
+                  handleNodeContentUpdate(message.senderId, message.content);
+                }
+                break;
+              case 'context_updated':
+                if (!isUpdatingContext) {
+                  handleContextUpdate(message);
+                }
+                break;
+            }
+          } catch (error) {
+            console.error('Error handling message:', error);
+          }
+        }
+      );
+
+      return () => {
+        try {
+          unsubscribe();
+          nodeCapabilityService.unregisterNode(id);
+          if (contextUpdateTimeoutRef.current) {
+            clearTimeout(contextUpdateTimeoutRef.current);
+          }
+        } catch (error) {
+          console.error('Error cleaning up ChatNode:', error);
+        }
+      };
+    } catch (error) {
+      console.error('Error initializing ChatNode:', error);
+    }
+  }, [id, isUpdatingContext]);
+
+  // Define updateEnvironmentContext first
+  const updateEnvironmentContext = useCallback(() => {
+    if (isUpdatingContext) return;
 
     const context = [
       localSettings.environmentPrompt || DEFAULT_ENVIRONMENT_PROMPT,
       "\nCurrent Environment Status:",
-      `Connected Nodes: ${connectedNodes.length}`,
+      `Connected Nodes: ${connectedNodes.size}`,
+      "\nDetailed Node Information:"
     ];
 
-    // Add information about each connected node
-    connectedNodes.forEach(node => {
-      switch (node?.type) {
-        case 'notesNode':
-          context.push(`\nNotes Node "${node.data.label}":`);
-          context.push(`Content: ${(node.data as NotesNodeData).content || 'Empty'}`);
-          break;
-        case 'imageNode':
-          context.push(`\nImage Node "${node.data.label}":`);
-          context.push(`Caption: ${(node.data as ImageNodeData).caption || 'No caption'}`);
-          break;
-        case 'documentNode':
-          context.push(`\nDocument Node "${node.data.label}":`);
-          context.push(`Title: ${(node.data as DocumentNodeData).title || 'Untitled'}`);
-          break;
-        case 'urlNode':
-          context.push(`\nURL Node "${node.data.label}":`);
-          context.push(`URL: ${(node.data as UrlNodeData).url || 'No URL'}`);
-          context.push(`Description: ${(node.data as UrlNodeData).description || 'No description'}`);
-          break;
+    connectedNodes.forEach((nodeData, nodeId) => {
+      const nodeType = nodeData.type;
+      context.push(`\n## ${nodeType} Node (${nodeId})`);
+      
+      // Add node capabilities
+      if (nodeData.capabilities?.length > 0) {
+        context.push(`Capabilities: ${nodeData.capabilities.join(', ')}`);
+      }
+
+      // Add node content based on type
+      if (nodeData.content) {
+        switch (nodeType) {
+          case 'notesNode':
+            context.push('Notes Content:');
+            // Handle both string content and object content
+            const notesContent = typeof nodeData.content === 'string' 
+              ? nodeData.content 
+              : nodeData.content.text || nodeData.content;
+            context.push(notesContent);
+            break;
+          case 'imageNode':
+            context.push('Image Caption:');
+            context.push(nodeData.content.caption || 'No caption available');
+            if (nodeData.content.description) {
+              context.push('Image Description:');
+              context.push(nodeData.content.description);
+            }
+            break;
+          case 'documentNode':
+            context.push('Document Title:');
+            context.push(nodeData.content.title || 'Untitled');
+            if (nodeData.content.text) {
+              context.push('Document Content:');
+              context.push(nodeData.content.text);
+            }
+            break;
+          case 'urlNode':
+            context.push('URL Information:');
+            context.push(`Title: ${nodeData.content.title || 'No title'}`);
+            if (nodeData.content.description) {
+              context.push(`Description: ${nodeData.content.description}`);
+            }
+            break;
+        }
+      }
+      context.push(''); // Add empty line between nodes
+    });
+
+    // Add instructions for the AI about how to use connected nodes
+    context.push(`\nInstructions for Using Connected Nodes:
+1. You can reference content from any connected node in your responses
+2. When asked about connected nodes, list them and their content
+3. Use the information from connected nodes to enhance your responses
+4. You can request updates from connected nodes if needed
+5. Treat connected nodes' content as part of your knowledge base`);
+
+    // Update node data with new context
+    updateNode(id, {
+      ...safeData,
+      environmentContext: context.join('\n')
+    });
+
+    // Notify other nodes about context update
+    messageBus.emit('context_updated', {
+      senderId: id,
+      content: context.join('\n'),
+      type: 'context',
+      metadata: {
+        nodeId: id,
+        connectedNodes: Array.from(connectedNodes.keys())
+      }
+    });
+  }, [id, connectedNodes, localSettings.environmentPrompt, safeData, updateNode, isUpdatingContext]);
+
+  // Then define the node connection handlers
+  const handleNodeConnection = useCallback((nodeId: string, metadata: any) => {
+    console.log('ChatNode: Handling node connection:', { nodeId, metadata });
+    setConnectedNodes(prev => {
+      const updated = new Map(prev);
+      // Normalize the node type
+      const nodeType = metadata.type === 'notes' ? 'notesNode' : metadata.type;
+      console.log('ChatNode: Setting node type:', { nodeId, nodeType });
+      updated.set(nodeId, {
+        ...metadata,
+        type: nodeType
+      });
+      return updated;
+    });
+    
+    // Emit connection acknowledgment
+    console.log('ChatNode: Emitting connection acknowledgment');
+    messageBus.emit('connect', {
+      senderId: id,
+      receiverId: nodeId,
+      content: 'Connection accepted',
+      type: 'connection',
+      metadata: {
+        type: 'chat',
+        capabilities: nodeCapabilityService.getCapabilities(id)
       }
     });
 
+    updateEnvironmentContext();
+  }, [id, nodeCapabilityService, updateEnvironmentContext]);
+
+  const handleNodeDisconnection = useCallback((nodeId: string) => {
+    setConnectedNodes(prev => {
+      const updated = new Map(prev);
+      updated.delete(nodeId);
+      return updated;
+    });
+    updateEnvironmentContext();
+  }, [updateEnvironmentContext]);
+
+  // Enhance handleNodeContentUpdate to process different content types
+  const handleNodeContentUpdate = useCallback((nodeId: string, content: any) => {
+    setConnectedNodes(prev => {
+      const updated = new Map(prev);
+      const nodeData = updated.get(nodeId) || {};
+      
+      // Process content based on node type
+      let processedContent = content;
+      if (nodeData.type === 'notesNode') {
+        // For notes, ensure we store the actual content
+        processedContent = typeof content === 'string' ? content : content.text || content;
+      } else {
+        // For other types, maintain the content structure
+        processedContent = typeof content === 'string' ? { text: content } : content;
+      }
+      
+      updated.set(nodeId, { 
+        ...nodeData, 
+        content: processedContent,
+        lastUpdated: Date.now()
+      });
+      return updated;
+    });
+    
+    // Update environment context when content changes
+    updateEnvironmentContext();
+  }, [updateEnvironmentContext]);
+
+  // Handle context update
+  const handleContextUpdate = useCallback((message: EventMessage) => {
+    if (message.metadata?.nodeId !== id) return;
+    
+    setIsUpdatingContext(true);
+    
+    // Clear any existing timeout
+    if (contextUpdateTimeoutRef.current) {
+      clearTimeout(contextUpdateTimeoutRef.current);
+    }
+
+    // Set a new timeout to update the context
+    contextUpdateTimeoutRef.current = setTimeout(() => {
+      const { connectedNodes: newConnectedNodes, connectedNodesContent } = message.metadata;
+      
+      // Update connected nodes map
+      setConnectedNodes(prev => {
+        const updated = new Map(prev);
+        newConnectedNodes.forEach((nodeId: string) => {
+          const nodeContent = connectedNodesContent.find((content: any) => content.nodeId === nodeId);
+          if (nodeContent) {
+            updated.set(nodeId, nodeContent);
+          }
+        });
+        return updated;
+      });
+
+      setIsUpdatingContext(false);
+    }, 100);
+  }, [id]);
+
+  // Update getEnvironmentContext to provide richer context about connected nodes
+  const getEnvironmentContext = useCallback(() => {
+    const context = [
+      localSettings.environmentPrompt || DEFAULT_ENVIRONMENT_PROMPT,
+      "\nCurrent Environment Status:",
+      `Connected Nodes: ${connectedNodes.size}`,
+      "\nDetailed Node Information:"
+    ];
+
+    connectedNodes.forEach((nodeData, nodeId) => {
+      const nodeType = nodeData.type;
+      context.push(`\n## ${nodeType} Node (${nodeId})`);
+      
+      // Add node capabilities
+      if (nodeData.capabilities?.length > 0) {
+        context.push(`Capabilities: ${nodeData.capabilities.join(', ')}`);
+      }
+
+      // Add node content based on type
+      if (nodeData.content) {
+        switch (nodeType) {
+          case 'notesNode':
+            context.push('Notes Content:');
+            // Handle both string content and object content
+            const notesContent = typeof nodeData.content === 'string' 
+              ? nodeData.content 
+              : nodeData.content.text || nodeData.content;
+            context.push(notesContent);
+            break;
+          case 'imageNode':
+            context.push('Image Caption:');
+            context.push(nodeData.content.caption || 'No caption available');
+            if (nodeData.content.description) {
+              context.push('Image Description:');
+              context.push(nodeData.content.description);
+            }
+            break;
+          case 'documentNode':
+            context.push('Document Title:');
+            context.push(nodeData.content.title || 'Untitled');
+            if (nodeData.content.text) {
+              context.push('Document Content:');
+              context.push(nodeData.content.text);
+            }
+            break;
+          case 'urlNode':
+            context.push('URL Information:');
+            context.push(`Title: ${nodeData.content.title || 'No title'}`);
+            if (nodeData.content.description) {
+              context.push(`Description: ${nodeData.content.description}`);
+            }
+            break;
+        }
+      }
+      context.push(''); // Add empty line between nodes
+    });
+
+    // Add instructions for the AI about how to use connected nodes
+    context.push(`\nInstructions for Using Connected Nodes:
+1. You can reference content from any connected node in your responses
+2. When asked about connected nodes, list them and their content
+3. Use the information from connected nodes to enhance your responses
+4. You can request updates from connected nodes if needed
+5. Treat connected nodes' content as part of your knowledge base`);
+
     return context.join('\n');
-  }, [id, getEdges, getNode, localSettings.environmentPrompt]);
+  }, [connectedNodes, localSettings.environmentPrompt]);
 
   // Get available models based on selected provider
   const getAvailableModels = useCallback(() => {
@@ -362,39 +699,85 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     return () => window.removeEventListener('nodeEvent', handleEvent);
   }, [handleNodeEvent]);
 
-  // Listen for edge changes using useEffect
+  // Update the edge changes handler with error handling
   useEffect(() => {
     const handleEdgeChanges = () => {
-      // Update environment context when edges change
-      const context = getEnvironmentContext();
-      console.log('Edges changed, updating context:', context);
-      
-      // Emit an event to notify that the chat node's context has changed
-      const nodeEvent: NodeEvent = {
-        type: 'update',
-        source: id,
-        target: 'all',
-        payload: {
-          type: 'contextUpdate',
-          content: context
-        },
-        timestamp: Date.now()
+      try {
+        const edges = getEdges();
+        const updatedConnectedNodes = new Map();
+        
+        edges.forEach(edge => {
+          if (edge.source === id || edge.target === id) {
+            const connectedId = edge.source === id ? edge.target : edge.source;
+            const connectedNode = getNode(connectedId);
+            if (connectedNode) {
+              updatedConnectedNodes.set(connectedId, {
+                type: connectedNode.type,
+                nodeId: connectedId,
+                capabilities: nodeCapabilityService.getCapabilities(connectedId) || []
+              });
+            }
+          }
+        });
+
+        setConnectedNodes(updatedConnectedNodes);
+        
+        const context = getEnvironmentContext();
+        console.log('Edges changed, updating context:', context);
+        
+        messageBus.emit('context_updated', {
+          senderId: id,
+          content: context,
+          type: 'context',
+          metadata: {
+            nodeId: id,
+            connectedNodes: Array.from(updatedConnectedNodes.keys())
+          }
+        });
+      } catch (error) {
+        console.error('Error handling edge changes:', error);
+      }
+    };
+
+    try {
+      window.addEventListener('connect', handleEdgeChanges);
+      window.addEventListener('edge.added', handleEdgeChanges);
+      window.addEventListener('edge.removed', handleEdgeChanges);
+
+      handleEdgeChanges();
+
+      return () => {
+        window.removeEventListener('connect', handleEdgeChanges);
+        window.removeEventListener('edge.added', handleEdgeChanges);
+        window.removeEventListener('edge.removed', handleEdgeChanges);
+      };
+    } catch (error) {
+      console.error('Error setting up edge change listeners:', error);
+    }
+  }, [id, getEdges, getNode, getEnvironmentContext, nodeCapabilityService]);
+
+  // Add this effect to handle note save confirmations
+  useEffect(() => {
+    const unsubscribeNoteSave = nodeMessageService.subscribe(id, 'note_save', (message: NodeMessage) => {
+      console.log('ChatNode received note save confirmation:', message);
+      // Add a confirmation message to the chat
+      const confirmationMessage = {
+        id: crypto.randomUUID(),
+        role: 'assistant' as const,
+        content: 'Note has been saved successfully.',
+        timestamp: Date.now(),
       };
       
-      window.dispatchEvent(new CustomEvent('nodeEvent', { detail: nodeEvent }));
-    };
-
-    // Add event listeners for edge changes
-    window.addEventListener('connect', handleEdgeChanges);
-    window.addEventListener('edge.added', handleEdgeChanges);
-    window.addEventListener('edge.removed', handleEdgeChanges);
+      updateNode(id, {
+        ...safeData,
+        messages: [...(safeData.messages || []), confirmationMessage],
+      });
+    });
 
     return () => {
-      window.removeEventListener('connect', handleEdgeChanges);
-      window.removeEventListener('edge.added', handleEdgeChanges);
-      window.removeEventListener('edge.removed', handleEdgeChanges);
+      unsubscribeNoteSave();
     };
-  }, [id, getEnvironmentContext]);
+  }, [id, safeData, updateNode]);
 
   const handleSettingsOpen = () => setSettingsOpen(true);
   const handleSettingsClose = () => {
@@ -419,7 +802,6 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     try {
       let isValid = false;
 
-      // Validate API key based on provider
       if (localSettings.provider === 'cohere') {
         const response = await fetch('https://api.cohere.ai/v1/chat', {
           method: 'POST',
@@ -438,14 +820,19 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
 
         isValid = response.ok;
       } else if (localSettings.provider === 'deepseek') {
+        // Validate GitHub token
         const response = await fetch('https://api.github.com/user', {
           headers: {
-            'Authorization': `Bearer ${localApiKey}`,
-            'Accept': 'application/json'
+            'Accept': 'application/vnd.github.v3+json',
+            'Authorization': `token ${localApiKey}`
           }
         });
 
         isValid = response.ok;
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Invalid GitHub token. Please check your credentials.');
+        }
       }
 
       if (isValid) {
@@ -469,20 +856,83 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         
         // Close dialog
         setSettingsOpen(false);
-      } else {
-        throw new Error('Failed to validate API key');
       }
     } catch (error) {
       console.error('Error saving settings:', error);
       setValidationMessage({
         type: 'error',
-        message: error instanceof Error ? error.message : 'Failed to save settings'
+        message: error instanceof Error ? error.message : 'Failed to validate API key'
       });
     } finally {
       setIsValidatingKey(false);
     }
   }, [id, safeData, localSettings, localApiKey, updateNode]);
 
+  // Update createAndSendNote function
+  const createAndSendNote = async (content: string, isQuestion: boolean, connectedNotesNodes: string[]) => {
+    try {
+      const systemContext = [
+        safeData.settings.systemPrompt || localSettings.systemPrompt,
+        "",
+        getEnvironmentContext(),
+        "\nIMPORTANT: When taking notes or answering questions that should be saved as notes:\n" +
+        "1. Your response should be formatted as a clean, well-structured note\n" +
+        "2. Do not include any meta-commentary or formatting instructions\n" +
+        "3. Focus on providing clear, concise, and accurate information\n" +
+        "4. The entire response will be saved as a note\n"
+      ].join('\n');
+
+      const response = await fetch('https://api.cohere.ai/v1/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${safeData.settings.apiKey}`,
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          message: isQuestion ?
+            `Please answer this question in a clear, note-friendly format: ${content}`
+            :
+            `Please format this content as a clean, well-structured note: ${content}`,
+          model: safeData.settings.model,
+          temperature: safeData.settings.temperature,
+          max_tokens: safeData.settings.maxTokens,
+          stream: false
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to get response from AI');
+      }
+
+      const result = await response.json();
+      const noteContent = result.text || (result.message && result.message.text);
+
+      if (!noteContent) {
+        throw new Error('No response content found');
+      }
+
+      // Send the note content to all connected notes nodes
+      let noteSent = false;
+      for (const noteNodeId of connectedNotesNodes) {
+        console.log('Sending note to node:', noteNodeId);
+        try {
+          nodeMessageService.sendNoteDraft(id, noteNodeId, noteContent);
+          noteSent = true;
+        } catch (error) {
+          console.error('Error sending note to node:', noteNodeId, error);
+        }
+      }
+
+      // Return a simple confirmation message for the chat
+      return noteSent ? "Note has been sent to the Notes node for review." : "Failed to send note to connected nodes. Please try again.";
+    } catch (error) {
+      console.error('Error in createAndSendNote:', error);
+      throw error;
+    }
+  };
+
+  // Update handleSendMessage to handle note requests more directly
   const handleSendMessage = useCallback(async () => {
     if (!input.trim() || !safeData.settings?.apiKey) return;
 
@@ -503,138 +953,152 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     setInput('');
 
     try {
-      let responseText;
-      
-      if (safeData.settings.provider === 'cohere') {
-        // Prepare system message with enhanced context
-        const systemContext = [
-          safeData.settings.systemPrompt || localSettings.systemPrompt,
-          "",
-          getEnvironmentContext()
-        ].join('\n');
-
-        // Prepare chat history
-        const chatHistory = [
-          {
-            role: 'System',
-            message: systemContext
-          },
-          ...updatedMessages.slice(0, -1).map(msg => ({
-            role: msg.role === 'user' ? 'User' : 'Chatbot',
-            message: msg.content
-          }))
-        ];
-
-        // Call Cohere API
-        const response = await fetch('https://api.cohere.ai/v1/chat', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${safeData.settings.apiKey}`,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            message: userMessage.content,
-            model: safeData.settings.model,
-            temperature: safeData.settings.temperature,
-            max_tokens: safeData.settings.maxTokens,
-            chat_history: chatHistory,
-            stream: false
-          }),
+      // Find connected notes nodes
+      const connectedNotesNodes = Array.from(connectedNodes.entries())
+        .filter(([_, nodeData]) => {
+          console.log('Checking node data:', nodeData);
+          const isNotesNode = nodeData.type === 'notesNode' || nodeData.type === 'notes';
+          console.log('Is notes node:', isNotesNode);
+          return isNotesNode;
+        })
+        .map(([nodeId]) => {
+          console.log('Found notes node:', nodeId);
+          return nodeId;
         });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || `API error: ${response.status}`);
-        }
+      console.log('Note-taking enabled:', isNoteTakingEnabled);
+      console.log('Connected Notes Nodes:', connectedNotesNodes);
+      console.log('All connected nodes:', connectedNodes);
 
-        const result = await response.json();
-        responseText = result.text || (result.message && result.message.text);
+      // Regular chat message processing
+      const systemContext = [
+        safeData.settings.systemPrompt || localSettings.systemPrompt,
+        "",
+        getEnvironmentContext(),
+        isNoteTakingEnabled ? 
+          "\nIMPORTANT: You are in note-taking mode. Format your response as a clear, concise note." 
+          : ""
+      ].join('\n');
 
-        if (!responseText) {
-          throw new Error('No response text found in API response');
-        }
-      } else if (safeData.settings.provider === 'deepseek') {
-        // Prepare system message with enhanced context
-        const systemContext = [
-          safeData.settings.systemPrompt || localSettings.systemPrompt,
-          "",
-          getEnvironmentContext()
-        ].join('\n');
+      const chatHistory = [
+        {
+          role: 'System',
+          message: systemContext
+        },
+        ...updatedMessages.slice(0, -1).map(msg => ({
+          role: msg.role === 'user' ? 'User' : 'Chatbot',
+          message: msg.content
+        }))
+      ];
 
-        // Call DeepSeek API
-        const response = await fetch('https://api.github.com/models/azureml-deepseek/DeepSeek-R1/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${safeData.settings.apiKey}`,
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify({
-            model: safeData.settings.model,
-            messages: [
-              { role: 'system', content: systemContext },
-              ...updatedMessages.map(msg => ({
-                role: msg.role,
-                content: msg.content
-              }))
-            ],
-            temperature: safeData.settings.temperature,
-            max_tokens: safeData.settings.maxTokens
-          }),
-        });
+      // Call Cohere API
+      const response = await fetch('https://api.cohere.ai/v1/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${safeData.settings.apiKey}`,
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          message: userMessage.content,
+          model: safeData.settings.model,
+          temperature: safeData.settings.temperature,
+          max_tokens: safeData.settings.maxTokens,
+          chat_history: chatHistory,
+          stream: false
+        }),
+      });
 
-        if (!response.ok) {
-          const errorData = await response.json();
-          throw new Error(errorData.message || `API error: ${response.status}`);
-        }
-
-        const result = await response.json();
-        responseText = result.choices[0]?.message?.content;
-
-        if (!responseText) {
-          throw new Error('No response text found in API response');
-        }
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || `API error: ${response.status}`);
       }
 
-      // Create assistant message
-      const assistantMessage = {
+      const result = await response.json();
+      const responseText = result.text || (result.message && result.message.text);
+
+      if (!responseText) {
+        throw new Error('No response text found in API response');
+      }
+
+      // If note-taking is enabled and we have connected notes nodes, send as note
+      if (isNoteTakingEnabled && connectedNotesNodes.length > 0) {
+        console.log('ChatNode: Note-taking mode active, sending to nodes:', connectedNotesNodes);
+        
+        // Format the note content to include both question and answer
+        const noteContent = `Question: ${userMessage.content}\n\nAnswer: ${responseText}`;
+        
+        // Send to all connected notes nodes
+        let noteSent = false;
+        for (const noteNodeId of connectedNotesNodes) {
+          try {
+            console.log('ChatNode: Sending note to node:', noteNodeId);
+            
+            // Send the note draft
+            nodeMessageService.sendMessage({
+              senderId: id,
+              receiverId: noteNodeId,
+              type: 'note_draft',
+              content: noteContent,
+              metadata: {
+                timestamp: Date.now()
+              }
+            });
+            
+            console.log('ChatNode: Successfully sent note');
+            noteSent = true;
+          } catch (error) {
+            console.error('ChatNode: Error sending note:', error);
+          }
+        }
+
+        // Only show confirmation message in chat
+        const confirmationMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant' as const,
+          content: noteSent ? "Note has been saved." : "Failed to save note.",
+          timestamp: Date.now(),
+        };
+
+        // Update chat with just the confirmation
+        updateNode(id, {
+          ...safeData,
+          messages: [...updatedMessages, confirmationMessage],
+        });
+      } else {
+        console.log('Not sending note - conditions not met:', {
+          isNoteTakingEnabled,
+          hasConnectedNodes: connectedNotesNodes.length > 0
+        });
+        // Normal chat mode - show the full response
+        const assistantMessage = {
+          id: crypto.randomUUID(),
+          role: 'assistant' as const,
+          content: responseText,
+          timestamp: Date.now(),
+        };
+
+        updateNode(id, {
+          ...safeData,
+          messages: [...updatedMessages, assistantMessage],
+        });
+      }
+
+    } catch (error) {
+      console.error('Error:', error);
+      const errorMessage = {
         id: crypto.randomUUID(),
-        role: 'assistant' as const,
-        content: responseText,
+        role: 'error' as const,
+        content: error instanceof Error ? error.message : 'Failed to send message',
         timestamp: Date.now(),
       };
 
-      // Update chat with assistant's response
-      const newMessages = [...updatedMessages, assistantMessage];
       updateNode(id, {
         ...safeData,
-        messages: newMessages,
-      });
-
-      // After getting the response, notify connected nodes
-      const nodeEvent: NodeEvent = {
-        type: 'update',
-        source: id,
-        target: 'all',
-        payload: {
-          type: 'message',
-          content: responseText
-        },
-        timestamp: Date.now()
-      };
-
-      // Emit the event
-      const event = new CustomEvent('nodeEvent', { detail: nodeEvent });
-      window.dispatchEvent(event);
-    } catch (error) {
-      console.error('Error:', error);
-      setValidationMessage({
-        type: 'error',
-        message: error instanceof Error ? error.message : 'Failed to send message'
+        messages: [...updatedMessages, errorMessage],
       });
     }
-  }, [id, safeData, input, updateNode, getEnvironmentContext, localSettings.systemPrompt]);
+  }, [id, safeData, input, updateNode, getEnvironmentContext, localSettings.systemPrompt, connectedNodes, isNoteTakingEnabled]);
 
   const handleKeyPress = useCallback(
     (event: React.KeyboardEvent) => {
@@ -646,6 +1110,22 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     [handleSendMessage]
   );
 
+  const handleResetChat = useCallback(() => {
+    updateNode(id, {
+      ...safeData,
+      messages: []
+    });
+  }, [id, safeData, updateNode]);
+
+  const handleCopyMessage = useCallback((content: string) => {
+    navigator.clipboard.writeText(content);
+  }, []);
+
+  // Add this before the return statement
+  const handleToggleNoteTaking = useCallback(() => {
+    setIsNoteTakingEnabled(prev => !prev);
+  }, []);
+
   return (
     <ChatNodeErrorBoundary>
       <BaseNode id={id} data={safeData} selected={selected}>
@@ -653,7 +1133,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
           sx={{
             display: 'flex',
             flexDirection: 'column',
-            height: '300px',
+            height: '400px',
             width: '300px',
             overflow: 'hidden',
           }}
@@ -661,15 +1141,42 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
           <Box
             sx={{
               display: 'flex',
-              justifyContent: 'flex-end',
+              justifyContent: 'space-between',
+              alignItems: 'center',
               p: 1,
               borderBottom: 1,
               borderColor: 'divider',
+              bgcolor: 'background.paper',
             }}
           >
-            <IconButton size="small" onClick={handleSettingsOpen}>
-              <SettingsIcon />
-            </IconButton>
+            <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+              {hasConnectedNotesNode && (
+                <Button
+                  size="small"
+                  variant={isNoteTakingEnabled ? "contained" : "outlined"}
+                  color={isNoteTakingEnabled ? "primary" : "inherit"}
+                  onClick={handleToggleNoteTaking}
+                  sx={{ minWidth: 'auto', p: '4px 8px' }}
+                >
+                  {isNoteTakingEnabled ? "Taking Notes" : "Take Notes"}
+                </Button>
+              )}
+              <IconButton
+                size="small"
+                onClick={handleResetChat}
+                title="Reset Chat"
+                color="primary"
+              >
+                <RecyclingIcon />
+              </IconButton>
+              <IconButton
+                size="small"
+                onClick={handleSettingsOpen}
+                title="Settings"
+              >
+                <SettingsIcon fontSize="small" />
+              </IconButton>
+            </Box>
           </Box>
 
           <Paper
@@ -687,6 +1194,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   sx={{
                     flexDirection: 'column',
                     alignItems: message.role === 'user' ? 'flex-end' : 'flex-start',
+                    width: '100%'
                   }}
                 >
                   <Typography
@@ -696,23 +1204,55 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   >
                     {message.role}
                   </Typography>
-                  <Paper
-                    sx={{
-                      p: 1,
-                      bgcolor:
-                        message.role === 'user'
-                          ? 'primary.main'
-                          : 'background.paper',
-                      color:
-                        message.role === 'user' ? 'primary.contrastText' : 'inherit',
-                      maxWidth: '80%',
-                    }}
-                  >
-                    <ListItemText
-                      primary={message.content}
-                      sx={{ m: 0 }}
-                    />
-                  </Paper>
+                  <Box sx={{ 
+                    maxWidth: '80%',
+                    width: message.role === 'error' ? '100%' : 'auto',
+                    position: 'relative',
+                  }}>
+                    {message.role === 'error' ? (
+                      <ErrorMessage message={message.content} />
+                    ) : (
+                      <Paper
+                        sx={{
+                          p: 1,
+                          pr: 4,
+                          bgcolor: message.role === 'user' ? 'primary.main' : 'background.paper',
+                          color: message.role === 'user' ? 'primary.contrastText' : 'inherit',
+                          position: 'relative',
+                        }}
+                      >
+                        <ListItemText
+                          primary={message.content}
+                          sx={{ 
+                            m: 0,
+                            '& .MuiTypography-root': {
+                              fontSize: '0.8rem',
+                              lineHeight: 1.4,
+                              whiteSpace: 'pre-wrap',
+                              wordBreak: 'break-word'
+                            }
+                          }}
+                        />
+                        <IconButton
+                          size="small"
+                          onClick={() => handleCopyMessage(message.content)}
+                          sx={{
+                            position: 'absolute',
+                            right: 4,
+                            top: 4,
+                            color: message.role === 'user' ? 'primary.contrastText' : 'primary.main',
+                            opacity: 0.7,
+                            '&:hover': {
+                              opacity: 1
+                            }
+                          }}
+                          title="Copy message"
+                        >
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
+                      </Paper>
+                    )}
+                  </Box>
                 </ListItem>
               ))}
               <div ref={messagesEndRef} />
