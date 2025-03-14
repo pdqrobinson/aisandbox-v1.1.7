@@ -5,7 +5,7 @@ export interface Message {
   id?: string;
   role: 'user' | 'assistant';
   content: string;
-  timestamp: Date;
+  timestamp: number | Date;
   from?: string;
   to?: string;
   status?: 'sent' | 'delivered' | 'failed';

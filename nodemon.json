@@ -3,7 +3,7 @@
     "server.js",
     "server/**/*"
   ],
-  "ext": "js,json",
+  "ext": "js,json,ts",
   "ignore": [
     "node_modules/**/*",
     "dist/**/*",
@@ -16,7 +16,7 @@
     "src/**/*",
     "public/**/*"
   ],
-  "delay": "3000",
+  "delay": "1000",
   "env": {
     "NODE_ENV": "development"
   },

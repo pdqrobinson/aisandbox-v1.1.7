@@ -6,7 +6,7 @@ import { useSandboxState } from '../services/SandboxState';
 export function AppHeader() {
   const { getActiveAgents } = useSandboxState();
   const [isConnected, setIsConnected] = React.useState(false);
-  const [lastChecked, setLastChecked] = React.useState<Date | null>(null);
+  const [lastCheckedTimestamp, setLastCheckedTimestamp] = React.useState<number | null>(null);
 
   const checkConnection = React.useCallback(async () => {
     try {
@@ -16,7 +16,7 @@ export function AppHeader() {
     } catch (error) {
       setIsConnected(false);
     }
-    setLastChecked(new Date());
+    setLastCheckedTimestamp(Date.now());
   }, []);
 
   React.useEffect(() => {
@@ -25,11 +25,24 @@ export function AppHeader() {
     return () => clearInterval(interval);
   }, [checkConnection]);
 
+  const formatTimestamp = (timestamp: number): string => {
+    return new Date(timestamp).toLocaleTimeString();
+  };
+
   const activeAgents = getActiveAgents();
 
   return (
-    <AppBar position="static" color="default" elevation={1}>
-      <Toolbar>
+    <AppBar 
+      position="relative" 
+      color="default" 
+      elevation={1}
+      sx={{ 
+        zIndex: 10,
+        borderBottom: 1,
+        borderColor: 'divider'
+      }}
+    >
+      <Toolbar sx={{ minHeight: 64 }}>
         <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
           AI Sandbox
         </Typography>
@@ -50,12 +63,22 @@ export function AppHeader() {
               color={isConnected ? 'success' : 'error'}
               size="small"
             />
-            <Tooltip title="Check Connection">
-              <IconButton size="small" onClick={checkConnection}>
+            <Tooltip title="Check Server Connection">
+              <IconButton 
+                size="small" 
+                onClick={checkConnection}
+                color={isConnected ? 'success' : 'error'}
+              >
                 <RefreshIcon />
               </IconButton>
             </Tooltip>
           </Box>
+          
+          {lastCheckedTimestamp && (
+            <Typography variant="caption" color="text.secondary">
+              Last checked: {formatTimestamp(lastCheckedTimestamp)}
+            </Typography>
+          )}
         </Box>
       </Toolbar>
     </AppBar>

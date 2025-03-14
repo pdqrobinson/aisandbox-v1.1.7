@@ -131,9 +131,12 @@ export function SandboxApp() {
   }, [setEdges, setNodes, updateAgent]);
 
   const handleAddAgent = () => {
+    // Generate a unique ID for the new agent
+    const newAgentId = `agent-${Date.now()}`;
+    
     const newAgent: AIAgent = {
-      id: `agent-${Date.now()}`,
-      name: `Agent ${Date.now()}`,
+      id: newAgentId,
+      name: `Agent ${nodes.length + 1}`, // More readable name based on count
       model: 'command-a-03-2025',
       provider: 'Cohere',
       status: 'active',
@@ -147,12 +150,12 @@ export function SandboxApp() {
     // Add the agent to the sandbox state
     addAgent(newAgent);
     
-    // Calculate a default position based on the number of existing nodes
-    const defaultX = 100 + (nodes.length * 50);
-    const defaultY = 100 + (nodes.length * 50);
+    // Calculate a position that's offset from existing nodes
+    const defaultX = 100 + (nodes.length * 150); // Increased spacing
+    const defaultY = 100 + (nodes.length * 100); // Increased spacing
     
     const newNode = {
-      id: newAgent.id,
+      id: newAgentId,
       type: 'aiNode',
       position: { x: defaultX, y: defaultY },
       data: {
@@ -165,7 +168,8 @@ export function SandboxApp() {
         apiKey: '',
         temperature: 0.7,
         systemPrompt: '',
-        isParent: false
+        isParent: false,
+        agent: newAgent // Add the full agent object to the node data
       }
     };
 

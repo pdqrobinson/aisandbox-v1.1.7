@@ -72,19 +72,20 @@ export interface Rule {
   consequences: string[];
 }
 
-export interface Message {
+export interface BaseMessage {
   id: string;
-  from: string;
-  to: string;
+  role: 'user' | 'assistant';
   content: string;
   timestamp: number;
-  status: 'sent' | 'delivered' | 'failed';
-  role: 'user' | 'assistant';
 }
 
-export interface SharedMessage extends Message {
-  // No additional fields needed since Message now uses from/to
+export interface Message extends BaseMessage {
+  from: string;
+  to: string;
+  status: 'sent' | 'delivered' | 'failed';
 }
+
+export type SharedMessage = Message;
 
 export interface ModelOption {
   id: string;

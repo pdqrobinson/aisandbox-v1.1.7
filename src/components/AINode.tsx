@@ -24,9 +24,13 @@ import {
   Stack,
   Checkbox,
   Popover,
-  ListItemButton
+  ListItemButton,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions
 } from '@mui/material';
-import { Send as SendIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { Send as SendIcon, Refresh as RefreshIcon, WifiOff as WifiOffIcon, Wifi as WifiIcon } from '@mui/icons-material';
 import { Message, SharedMessage, ModelOption, Agent } from '../types/sandbox';
 import { CohereClientV2 } from 'cohere-ai';
 import { useSandboxState, AIAgent } from '../services/SandboxState';
@@ -182,6 +186,22 @@ const calculateAverageResponseTime = (messages: Message[]): number => {
   return responseCount > 0 ? Math.round(totalResponseTime / responseCount) : 0;
 };
 
+// Add helper function to normalize timestamps
+const normalizeTimestamp = (timestamp: number | Date | undefined): number => {
+  if (timestamp === undefined) return Date.now();
+  return timestamp instanceof Date ? timestamp.getTime() : timestamp;
+};
+
+// Add a more robust message deduplication helper
+const isMessageDuplicate = (message: Message, existingMessages: Message[]): boolean => {
+  return existingMessages.some(existing => 
+    existing.id === message.id || 
+    (existing.content === message.content && 
+     existing.from === message.from && 
+     Math.abs(existing.timestamp - message.timestamp) < 1000)
+  );
+};
+
 const AINode: React.FC<AINodeProps> = ({ id, data }) => {
   const roleManager = AIRoleManager.getInstance();
   const chatEndRef = useRef<HTMLDivElement>(null);
@@ -193,7 +213,7 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
   const [messages, setMessages] = useState<Message[]>(data.messages || []);
   const [inputMessage, setInputMessage] = useState('');
   const [loading, setLoading] = useState(false);
-  const [, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [validationStatus, setValidationStatus] = useState<{
     type: 'success' | 'error' | 'info';
@@ -203,28 +223,27 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
   const [nodeId] = useState(() => `node-${Math.random().toString(36).substr(2, 9)}`);
   const { addAgent, updateAgent, removeAgent, getActiveAgents } = useSandboxState();
   const [selectedRole, setSelectedRole] = useState<string>(() => {
-    // If there's a role in data, use it
     if (data.role) {
       return data.role;
     }
-    // Otherwise, get the first available role
     const availableRoles = roleManager.getAvailableRoles();
     return availableRoles[0]?.id || 'worker';
   });
   const [sharedConversations, setSharedConversations] = useState<Map<string, SharedConversation>>(new Map());
-  const [, setActiveConversation] = useState<string | null>(null);
-  const [, setAgentState] = useState<AgentState | null>(null);
+  const [activeConversation, setActiveConversation] = useState<string | null>(null);
+  const [agentState, setAgentState] = useState<AgentState | null>(null);
   const behaviorManager = AgentBehaviorManager.getInstance();
   const [messageStats, setMessageStats] = useState({
     successful: 0,
     failed: 0,
     total: 0
   });
-  const [processedMessageIds] = useState(() => new Set<string>());
+  const processedMessageIds = useRef(new Set<string>());
   const [isParent, setIsParent] = useState(false);
   const [parentNodeId, setParentNodeId] = useState<string | null>(null);
   const [modelAnchorEl, setModelAnchorEl] = useState<null | HTMLElement>(null);
   const modelOpen = Boolean(modelAnchorEl);
+  const [connectDialogOpen, setConnectDialogOpen] = useState(false);
   useSandbox();
   const [] = useState<Node[]>([]);
   const [] = useState<Edge[]>([]);
@@ -452,34 +471,70 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
     }
   }, [data.connectedNodes]);
 
-  // Handle incoming messages from connected nodes
+  // Consolidate message handling into a single effect
   useEffect(() => {
-    if (data.messages.length > 0) {
-      const lastMessage = data.messages[data.messages.length - 1];
-      const conversationId = [id, lastMessage.from].sort().join('-');
-      
-      setSharedConversations(prev => {
-        const newConversations = new Map(prev);
-        const conversation = newConversations.get(conversationId);
-        if (conversation) {
-          newConversations.set(conversationId, {
-            ...conversation,
-            messages: [...conversation.messages, {
-              id: lastMessage.id,
-              from: lastMessage.from,
-              to: lastMessage.to,
-              role: lastMessage.role,
-              content: lastMessage.content,
-              timestamp: lastMessage.timestamp,
-              status: lastMessage.status
-            }],
-            lastMessage: new Date().getTime()
-          });
+    const handleMessage = (message: Message | SharedMessage) => {
+      // Skip if already processed
+      if (!message.id || processedMessageIds.current.has(message.id)) {
+        return;
+      }
+
+      const normalizedMessage: Message = {
+        id: message.id,
+        role: message.role || 'assistant',
+        content: message.content,
+        timestamp: normalizeTimestamp(message.timestamp),
+        from: message.from || id,
+        to: message.to || '',
+        status: message.status || 'sent'
+      };
+
+      setMessages(prev => {
+        // Check for duplicates before adding
+        if (isMessageDuplicate(normalizedMessage, prev)) {
+          return prev;
         }
-        return newConversations;
+        return [...prev, normalizedMessage];
       });
-    }
-  }, [data.messages]);
+
+      processedMessageIds.current.add(message.id);
+
+      // Update shared conversations if needed
+      if (message.from && message.from !== id) {
+        const conversationId = [id, message.from].sort().join('-');
+        setSharedConversations(prev => {
+          const newConversations = new Map(prev);
+          const conversation = newConversations.get(conversationId) || {
+            id: conversationId,
+            participants: [id, message.from],
+            messages: [],
+            lastMessage: Date.now()
+          };
+
+          // Check for duplicates in conversation
+          if (!conversation.messages.some(m => m.id === normalizedMessage.id)) {
+            newConversations.set(conversationId, {
+              ...conversation,
+              messages: [...conversation.messages, normalizedMessage],
+              lastMessage: normalizedMessage.timestamp
+            });
+          }
+          return newConversations;
+        });
+      }
+    };
+
+    const unsubscribe = messageBus.subscribe(handleMessage);
+    
+    // Process initial messages
+    data.messages.forEach(message => {
+      if (!processedMessageIds.current.has(message.id)) {
+        handleMessage(message);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [data.messages, id]);
 
   // Initialize agent when component mounts
   useEffect(() => {
@@ -490,34 +545,41 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
     }
   }, [id]);
 
-  // Handle agent actions
-
   // Handle incoming messages for parent node
   const handleIncomingMessage = (message: SharedMessage) => {
     const conversationId = message.from;
-    const conversation = sharedConversations.get(conversationId);
+    const conversation = sharedConversations.get(conversationId) || {
+      id: conversationId,
+      participants: [id, message.from],
+      messages: [],
+      lastMessage: Date.now()
+    };
 
-    if (conversation) {
-      const timestamp = Date.now();
-      const newMessage: Message = {
-        id: message.id,
-        from: message.from,
-        to: message.to,
-        role: message.role,
-        content: message.content,
-        timestamp: message.timestamp,
-        status: message.status
-      };
+    const timestamp = Date.now();
+    const newMessage: Message = {
+      id: message.id,
+      from: message.from,
+      to: message.to,
+      role: message.role || 'assistant',
+      content: message.content,
+      timestamp: message.timestamp || Date.now(),
+      status: message.status
+    };
 
-      const newConversations = new Map(sharedConversations);
-      newConversations.set(conversationId, {
-        ...conversation,
-        messages: [...conversation.messages, newMessage],
-        lastMessage: timestamp
-      });
-      setSharedConversations(newConversations);
-      processMessageWithAI(newMessage);
-    }
+    // Update shared conversations
+    const newConversations = new Map(sharedConversations);
+    newConversations.set(conversationId, {
+      ...conversation,
+      messages: [...conversation.messages, newMessage],
+      lastMessage: timestamp
+    });
+    setSharedConversations(newConversations);
+
+    // Add to local messages
+    setMessages(prev => [...prev, newMessage]);
+
+    // Process with AI if needed
+    processMessageWithAI(newMessage);
   };
 
   const processMessageWithAI = async (message: Message) => {
@@ -676,70 +738,101 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
     }
   };
 
-  // Update message subscription effect
-  useEffect(() => {
-    const unsubscribe = messageBus.subscribe((message) => {
-      // Skip if we've already processed this message
-      if (processedMessageIds.has(message.id)) {
-        return;
-      }
-
-      // Mark message as processed immediately to prevent loops
-      processedMessageIds.add(message.id);
-
-      // Handle messages sent to this node
-      if (message.to === id) {
-        // Convert SharedMessage to Message format for local display
-        const localMessage: Message = {
-          id: message.id,
-          from: message.from,
-          to: message.to,
-          role: message.role,
-          content: message.content,
-          timestamp: message.timestamp,
-          status: message.status
-        };
-
-        // Add to local messages
-        setMessages(prev => [...prev, localMessage]);
-
-        // Update message stats
-        setMessageStats(prev => ({
-          ...prev,
-          total: prev.total + 1,
-          successful: prev.successful + 1
-        }));
-
-        // Process messages based on node role
-        if (!isParent && parentNodeId) {
-          // Child node processing
-          handleChildTask(message);
-        } else if (isParent && data.connectedNodes.length > 0) {
-          // Parent node processing
-          handleIncomingMessage(message);
-        }
-      }
-    });
-
-    return () => unsubscribe();
-  }, [id, processedMessageIds, isParent, parentNodeId, data.connectedNodes]);
-
-  // Update handleSendMessage to work with parent-child relationship
   const handleSendMessage = async () => {
-    if (inputMessage.trim()) {
-      const timestamp = Date.now();
-      const message: Message = {
-        id: `${id}-${timestamp}`,
+    if (!inputMessage.trim()) return;
+
+    const timestamp = Date.now();
+    const userMessage: Message = {
+      id: `${id}-${timestamp}`,
+      role: 'user',
+      content: inputMessage.trim(),
+      timestamp,
+      from: id,
+      to: '',
+      status: 'sent'
+    };
+
+    try {
+      setLoading(true);
+      // Add user message to chat (no need to add to messageBus yet)
+      setMessages(prev => [...prev, userMessage]);
+      setInputMessage('');
+
+      // Get model data
+      const selectedModelData = AVAILABLE_MODELS.find(m => m.id === selectedModel);
+      if (!selectedModelData) {
+        throw new Error('No model selected. Please select a model in settings.');
+      }
+
+      if (!apiKey) {
+        throw new Error('API key is missing. Please add your API key in settings.');
+      }
+
+      // Get current role for context
+      const currentRole = roleManager.getRole(id);
+      const roleContext = currentRole ? 
+        `You are currently acting as: ${currentRole.name}\n${currentRole.description}\n\n` : '';
+
+      // Make API call
+      const response = await fetch('http://localhost:3002/api/cohere/chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          message: inputMessage.trim(),
+          model: selectedModelData.model || 'command',
+          preamble: `${roleContext}${selectedModelData.systemPrompt}`,
+          temperature: temperature,
+          stream: false
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || `API request failed: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+      if (!data.text) {
+        throw new Error('No response received from AI');
+      }
+
+      // Add AI response to chat
+      const aiResponseTime = Date.now();
+      const aiMessage: Message = {
+        id: `${id}-${aiResponseTime}`,
+        role: 'assistant',
+        content: data.text,
+        timestamp: aiResponseTime,
         from: id,
-        to: parentNodeId || '',
-        content: inputMessage,
-        timestamp,
-        status: 'sent',
-        role: 'user'
+        to: userMessage.from,
+        status: 'delivered'
       };
 
-      await messageBus.sendMessage(message);
-      setInputMessage('');
+      setMessages(prev => [...prev, aiMessage]);
+
+      // After getting AI response, add both messages to messageBus
+      await messageBus.sendMessage(userMessage);
+      await messageBus.sendMessage(aiMessage);
+
+    } catch (err) {
+      // Add error message to chat
+      const errorTime = Date.now();
+      const errorMessage: Message = {
+        id: `${id}-${errorTime}`,
+        role: 'assistant',
+        content: `Error: ${err instanceof Error ? err.message : 'Failed to get AI response'}`,
+        timestamp: errorTime,
+        from: id,
+        to: userMessage.from,
+        status: 'failed'
+      };
+      setMessages(prev => [...prev, errorMessage]);
+      setError(err instanceof Error ? err.message : 'Failed to get AI response');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -788,7 +881,7 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
       failed: 0,
       total: 0
     });
-    processedMessageIds.clear();
+    processedMessageIds.current.clear();
     setSharedConversations(new Map());
     setActiveConversation(null);
   };
@@ -799,145 +892,246 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  // Update the connection handler
+  const handleConnectClick = () => {
+    if (!parentNodeId) {
+      setConnectDialogOpen(true);
+    }
+  };
+
+  const handleConnectConfirm = () => {
+    const event = new CustomEvent('node-connect-request', {
+      detail: { nodeId: id }
+    });
+    window.dispatchEvent(event);
+    setConnectDialogOpen(false);
+  };
 
   return (
-    <Paper 
-      elevation={3} 
-      sx={{ 
-        width: 400, 
-        height: 600, 
-        display: 'flex', 
-        flexDirection: 'column',
-        border: parentNodeId ? '2px solid #4CAF50' : 'none',
-        position: 'relative',
-        overflow: 'hidden'
-      }}
-    >
-      {/* Connection Status Indicator */}
-      {parentNodeId && (
-        <Box
-          sx={{
-            position: 'absolute',
-            top: -12,
-            right: -12,
-            backgroundColor: '#4CAF50',
-            borderRadius: '50%',
-            width: 24,
-            height: 24,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 1
-          }}
-        >
-          <Tooltip title={`Connected to ${getActiveAgents().find(a => a.id === parentNodeId)?.name || 'Parent Node'}`}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
-              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
-            </svg>
-          </Tooltip>
-        </Box>
-      )}
-
-      {/* Header */}
-      <Box sx={{ 
-        p: 1.5, 
-        borderBottom: 1, 
-        borderColor: 'divider',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        minWidth: 0 // Prevents flex items from overflowing
-      }}>
-        <Typography variant="h6" component="div" sx={{ 
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap'
-        }}>
-          {data.name || 'AI Node'}
-        </Typography>
-        <Box sx={{ 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: 0.5,
-          minWidth: 0 // Prevents flex items from overflowing
-        }}>
-          {isParent && (
-            <Chip
-              label="Parent Node"
-              color="primary"
-              size="small"
-              icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>}
-            />
-          )}
-          {parentNodeId && (
-            <Chip
-              label="Connected"
-              color="success"
-              size="small"
-              icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>}
-              onDelete={() => {
-                const event = new CustomEvent('node-disconnect', {
-                  detail: { nodeId: id, parentNodeId }
-                });
-                window.dispatchEvent(event);
-              }}
-            />
-          )}
-          <Tooltip title={parentNodeId ? "Connected to parent node" : "Connect to parent node"}>
-            <IconButton
-              size="small"
-              color={parentNodeId ? "success" : "default"}
-              onClick={() => {
-                if (!parentNodeId) {
-                  const event = new CustomEvent('node-connect-request', {
-                    detail: { nodeId: id }
-                  });
-                  window.dispatchEvent(event);
-                }
-              }}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
-              </svg>
-            </IconButton>
-          </Tooltip>
-        </Box>
-      </Box>
-
-      <Tabs 
-        value={tabValue} 
-        onChange={handleTabChange} 
+    <>
+      <Paper 
+        elevation={3} 
         sx={{ 
-          borderBottom: 1, 
-          borderColor: 'divider',
-          minWidth: 0 // Prevents tabs from overflowing
+          width: 400, 
+          height: 600, 
+          display: 'flex', 
+          flexDirection: 'column',
+          border: parentNodeId ? '2px solid #4CAF50' : 'none',
+          position: 'relative',
+          overflow: 'hidden'
         }}
       >
-        <Tab label="Chat" />
-        <Tab label="Settings" />
-        <Tab label="Stats" />
-      </Tabs>
+        {/* Connection Status Indicator */}
+        {parentNodeId && (
+          <Box
+            sx={{
+              position: 'absolute',
+              top: -12,
+              right: -12,
+              backgroundColor: '#4CAF50',
+              borderRadius: '50%',
+              width: 24,
+              height: 24,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 1
+            }}
+          >
+            <Tooltip title={`Connected to ${getActiveAgents().find(a => a.id === parentNodeId)?.name || 'Parent Node'}`}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="white">
+                <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/>
+              </svg>
+            </Tooltip>
+          </Box>
+        )}
 
-      <Box sx={{ 
-        position: 'relative', 
-        height: 'calc(100% - 48px)',
-        overflow: 'hidden',
-        width: '100%'
-      }}>
-        <TabPanel value={tabValue} index={0}>
-          {/* Chat content */}
+        {/* Header */}
+        <Box sx={{ 
+          p: 1.5, 
+          borderBottom: 1, 
+          borderColor: 'divider',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          minWidth: 0 // Prevents flex items from overflowing
+        }}>
+          <Typography variant="h6" component="div" sx={{ 
+            overflow: 'hidden',
+            textOverflow: 'ellipsis',
+            whiteSpace: 'nowrap'
+          }}>
+            {data.name || 'AI Node'}
+          </Typography>
           <Box sx={{ 
             display: 'flex', 
-            flexDirection: 'column', 
-            height: '100%',
-            p: 1,
-            overflow: 'hidden',
-            width: '100%'
+            alignItems: 'center', 
+            gap: 0.5,
+            minWidth: 0 // Prevents flex items from overflowing
           }}>
+            {isParent && (
+              <Chip
+                label="Parent Node"
+                color="primary"
+                size="small"
+                icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2L2 7l10 5 10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>}
+              />
+            )}
+            {parentNodeId && (
+              <Chip
+                label="Connected"
+                color="success"
+                size="small"
+                icon={<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z"/></svg>}
+                onDelete={() => {
+                  const event = new CustomEvent('node-disconnect', {
+                    detail: { nodeId: id, parentNodeId }
+                  });
+                  window.dispatchEvent(event);
+                }}
+              />
+            )}
+            <Tooltip title={parentNodeId ? "Connected to parent node" : "Connect to parent node"}>
+              <IconButton
+                size="small"
+                color={parentNodeId ? "success" : "default"}
+                onClick={handleConnectClick}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                  <path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                </svg>
+              </IconButton>
+            </Tooltip>
+          </Box>
+        </Box>
+
+        <Tabs 
+          value={tabValue} 
+          onChange={handleTabChange} 
+          sx={{ 
+            borderBottom: 1, 
+            borderColor: 'divider',
+            minWidth: 0 // Prevents tabs from overflowing
+          }}
+        >
+          <Tab label="Chat" />
+          <Tab label="Settings" />
+          <Tab label="Stats" />
+        </Tabs>
+
+        <Box sx={{ 
+          position: 'relative', 
+          height: 'calc(100% - 48px)',
+          overflow: 'hidden',
+          width: '100%'
+        }}>
+          <TabPanel value={tabValue} index={0}>
+            {/* Chat content */}
             <Box sx={{ 
-              flexGrow: 1, 
-              overflow: 'auto', 
-              mb: 1,
+              display: 'flex', 
+              flexDirection: 'column', 
+              height: '100%',
+              p: 1,
+              overflow: 'hidden',
+              width: '100%'
+            }}>
+              <Box sx={{ 
+                flexGrow: 1, 
+                overflow: 'auto', 
+                mb: 1,
+                '&::-webkit-scrollbar': {
+                  width: '6px',
+                },
+                '&::-webkit-scrollbar-track': {
+                  background: '#f1f1f1',
+                  borderRadius: '3px',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: '#888',
+                  borderRadius: '3px',
+                  '&:hover': {
+                    background: '#555',
+                  },
+                },
+              }}>
+                {(activeConversation 
+                  ? sharedConversations.get(activeConversation)?.messages || []
+                  : messages
+                ).map((message, index) => (
+                  <Box 
+                    key={message.id || index} 
+                    sx={{ 
+                      mb: 1,
+                      p: 1,
+                      borderRadius: 1,
+                      maxWidth: '90%',
+                      ml: message.role === 'assistant' ? 0 : 'auto',
+                      mr: message.role === 'assistant' ? 'auto' : 0,
+                      bgcolor: message.role === 'assistant' ? 'action.hover' : 'transparent',
+                      wordBreak: 'break-word',
+                      overflowWrap: 'break-word'
+                    }}
+                  >
+                    <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 0.5 }}>
+                      {message.role === 'user' ? 'You' : message.from || 'Assistant'}
+                    </Typography>
+                    <Typography variant="body2">
+                      {message.content}
+                    </Typography>
+                    {message.timestamp && (
+                      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 0.5 }}>
+                        {new Date(message.timestamp).toLocaleTimeString()}
+                      </Typography>
+                    )}
+                  </Box>
+                ))}
+                <div ref={chatEndRef} />
+              </Box>
+              <Box sx={{ 
+                display: 'flex', 
+                gap: 1,
+                p: 1,
+                bgcolor: 'background.paper',
+                borderTop: 1,
+                borderColor: 'divider',
+                minWidth: 0 // Prevents flex items from overflowing
+              }}>
+                <TextField
+                  fullWidth
+                  size="small"
+                  value={inputMessage}
+                  onChange={(e) => setInputMessage(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  placeholder="Type a message..."
+                  disabled={loading}
+                  sx={{
+                    '& .MuiOutlinedInput-root': {
+                      fontSize: '0.875rem',
+                    },
+                    minWidth: 0 // Prevents text field from overflowing
+                  }}
+                />
+                <IconButton 
+                  color="primary" 
+                  onClick={handleSendMessage}
+                  disabled={loading || !inputMessage.trim()}
+                  sx={{ 
+                    minWidth: '40px',
+                    height: '40px',
+                    flexShrink: 0 // Prevents button from shrinking
+                  }}
+                >
+                  {loading ? <CircularProgress size={20} /> : <SendIcon />}
+                </IconButton>
+              </Box>
+            </Box>
+          </TabPanel>
+          <TabPanel value={tabValue} index={1}>
+            {/* Settings content */}
+            <Box sx={{ 
+              height: '100%', 
+              overflow: 'auto',
+              p: 1,
               '&::-webkit-scrollbar': {
                 width: '6px',
               },
@@ -953,447 +1147,384 @@ const AINode: React.FC<AINodeProps> = ({ id, data }) => {
                 },
               },
             }}>
-              {messages.map((message, index) => (
-                <Box 
-                  key={index} 
-                  sx={{ 
-                    mb: 1,
-                    p: 1,
-                    borderRadius: 1,
-                    maxWidth: '90%',
-                    ml: message.role === 'assistant' ? 0 : 'auto',
-                    mr: message.role === 'assistant' ? 'auto' : 0,
-                    wordBreak: 'break-word',
-                    overflowWrap: 'break-word'
-                  }}
-                >
-                  <Typography variant="body2">
-                    {message.content}
-                  </Typography>
-                </Box>
-              ))}
-              <div ref={chatEndRef} />
-            </Box>
-            <Box sx={{ 
-              display: 'flex', 
-              gap: 1,
-              p: 1,
-              bgcolor: 'background.paper',
-              borderTop: 1,
-              borderColor: 'divider',
-              minWidth: 0 // Prevents flex items from overflowing
-            }}>
-              <TextField
-                fullWidth
-                size="small"
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onKeyPress={handleKeyPress}
-                placeholder="Type a message..."
-                disabled={loading}
-                sx={{
-                  '& .MuiOutlinedInput-root': {
-                    fontSize: '0.875rem',
-                  },
-                  minWidth: 0 // Prevents text field from overflowing
-                }}
-              />
-              <IconButton 
-                color="primary" 
-                onClick={handleSendMessage}
-                disabled={loading || !inputMessage.trim()}
-                sx={{ 
-                  minWidth: '40px',
-                  height: '40px',
-                  flexShrink: 0 // Prevents button from shrinking
-                }}
-              >
-                {loading ? <CircularProgress size={20} /> : <SendIcon />}
-              </IconButton>
-            </Box>
-          </Box>
-        </TabPanel>
-        <TabPanel value={tabValue} index={1}>
-          {/* Settings content */}
-          <Box sx={{ 
-            height: '100%', 
-            overflow: 'auto',
-            p: 1,
-            '&::-webkit-scrollbar': {
-              width: '6px',
-            },
-            '&::-webkit-scrollbar-track': {
-              background: '#f1f1f1',
-              borderRadius: '3px',
-            },
-            '&::-webkit-scrollbar-thumb': {
-              background: '#888',
-              borderRadius: '3px',
-              '&:hover': {
-                background: '#555',
-              },
-            },
-          }}>
-            <Grid container spacing={2}>
-              <Grid item xs={12}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                  <Button
-                    variant="outlined"
-                    onClick={handleModelClick}
-                    sx={{ 
-                      minWidth: '200px',
-                      justifyContent: 'flex-start',
-                      textAlign: 'left',
-                      textTransform: 'none'
-                    }}
-                  >
-                    {selectedModelData ? `${selectedModelData.provider} - ${selectedModelData.name}` : 'Select Model'}
-                  </Button>
-                  <Popover
-                    open={modelOpen}
-                    anchorEl={modelAnchorEl}
-                    onClose={handleModelClose}
-                    anchorOrigin={{
-                      vertical: 'bottom',
-                      horizontal: 'left',
-                    }}
-                    transformOrigin={{
-                      vertical: 'top',
-                      horizontal: 'left',
-                    }}
-                  >
-                    <List sx={{ 
-                      maxHeight: 400,
-                      width: '300px',
-                      overflow: 'auto',
-                      '&::-webkit-scrollbar': {
-                        width: '8px',
-                      },
-                      '&::-webkit-scrollbar-track': {
-                        background: '#f1f1f1',
-                      },
-                      '&::-webkit-scrollbar-thumb': {
-                        background: '#888',
-                        borderRadius: '4px',
-                      },
-                    }}>
-                      {AVAILABLE_MODELS.map((model) => (
-                        <ListItem key={model.id} disablePadding>
-                          <ListItemButton 
-                            selected={model.id === selectedModel}
-                            onClick={() => handleModelSelect(model.id)}
-                          >
-                            <ListItemText 
-                              primary={`${model.provider} - ${model.name}`}
-                              secondary={model.description}
+              <Grid container spacing={2}>
+                <Grid item xs={12}>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Button
+                      variant="outlined"
+                      onClick={handleModelClick}
+                      sx={{ 
+                        minWidth: '200px',
+                        justifyContent: 'flex-start',
+                        textAlign: 'left',
+                        textTransform: 'none'
+                      }}
+                    >
+                      {selectedModelData ? `${selectedModelData.provider} - ${selectedModelData.name}` : 'Select Model'}
+                    </Button>
+                    <Popover
+                      open={modelOpen}
+                      anchorEl={modelAnchorEl}
+                      onClose={handleModelClose}
+                      anchorOrigin={{
+                        vertical: 'bottom',
+                        horizontal: 'left',
+                      }}
+                      transformOrigin={{
+                        vertical: 'top',
+                        horizontal: 'left',
+                      }}
+                    >
+                      <List sx={{ 
+                        maxHeight: 400,
+                        width: '300px',
+                        overflow: 'auto',
+                        '&::-webkit-scrollbar': {
+                          width: '8px',
+                        },
+                        '&::-webkit-scrollbar-track': {
+                          background: '#f1f1f1',
+                        },
+                        '&::-webkit-scrollbar-thumb': {
+                          background: '#888',
+                          borderRadius: '4px',
+                        },
+                      }}>
+                        {AVAILABLE_MODELS.map((model) => (
+                          <ListItem key={model.id} disablePadding>
+                            <ListItemButton 
+                              selected={model.id === selectedModel}
+                              onClick={() => handleModelSelect(model.id)}
+                            >
+                              <ListItemText 
+                                primary={`${model.provider} - ${model.name}`}
+                                secondary={model.description}
+                              />
+                            </ListItemButton>
+                          </ListItem>
+                        ))}
+                      </List>
+                    </Popover>
+                  </Box>
+                </Grid>
+                <Grid item xs={12}>
+                  {/* Role Selection */}
+                  <Box sx={{ mb: 2 }}>
+                    <Typography variant="subtitle2" gutterBottom>Role</Typography>
+                    <Stack direction="row" spacing={2} alignItems="center">
+                      {roleManager.getAvailableRoles().map((role) => (
+                        <FormControlLabel
+                          key={role.id}
+                          control={
+                            <Checkbox
+                              checked={selectedRole === role.id}
+                              onChange={() => handleRoleChange(role.id)}
+                              name={role.id}
+                              color="primary"
                             />
-                          </ListItemButton>
-                        </ListItem>
+                          }
+                          label={role.name}
+                        />
                       ))}
-                    </List>
-                  </Popover>
-                </Box>
-              </Grid>
-              <Grid item xs={12}>
-                {/* Role Selection */}
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="subtitle2" gutterBottom>Role</Typography>
-                  <Stack direction="row" spacing={2} alignItems="center">
-                    {roleManager.getAvailableRoles().map((role) => (
-                      <FormControlLabel
-                        key={role.id}
-                        control={
-                          <Checkbox
-                            checked={selectedRole === role.id}
-                            onChange={() => handleRoleChange(role.id)}
-                            name={role.id}
-                            color="primary"
-                          />
-                        }
-                        label={role.name}
+                    </Stack>
+                    <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
+                      {roleManager.getRole(id)?.description}
+                    </Typography>
+                  </Box>
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="API Key"
+                    type="password"
+                    value={apiKey}
+                    onChange={(e) => setApiKey(e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <Typography variant="body2" gutterBottom>Temperature</Typography>
+                  <Slider
+                    value={temperature}
+                    onChange={(_, value) => setTemperature(value as number)}
+                    min={0}
+                    max={1}
+                    step={0.1}
+                    marks
+                    size="small"
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <TextField
+                    fullWidth
+                    size="small"
+                    label="System Prompt"
+                    multiline
+                    rows={3}
+                    value={systemPrompt}
+                    onChange={(e) => setSystemPrompt(e.target.value)}
+                  />
+                </Grid>
+                <Grid item xs={12}>
+                  <FormControlLabel
+                    control={
+                      <Switch
+                        checked={isParent}
+                        onChange={handleParentStatusChange}
                       />
-                    ))}
-                  </Stack>
-                  <Typography variant="caption" color="text.secondary" sx={{ mt: 1, display: 'block' }}>
-                    {roleManager.getRole(id)?.description}
-                  </Typography>
-                </Box>
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="API Key"
-                  type="password"
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <Typography variant="body2" gutterBottom>Temperature</Typography>
-                <Slider
-                  value={temperature}
-                  onChange={(_, value) => setTemperature(value as number)}
-                  min={0}
-                  max={1}
-                  step={0.1}
-                  marks
-                  size="small"
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <TextField
-                  fullWidth
-                  size="small"
-                  label="System Prompt"
-                  multiline
-                  rows={3}
-                  value={systemPrompt}
-                  onChange={(e) => setSystemPrompt(e.target.value)}
-                />
-              </Grid>
-              <Grid item xs={12}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={isParent}
-                      onChange={handleParentStatusChange}
-                    />
-                  }
-                  label="Parent Node"
-                  sx={{ 
-                    width: '100%',
-                    m: 0,
-                    p: 1,
-                    borderRadius: 1,
-                    bgcolor: 'background.paper',
-                    '&:hover': {
-                      bgcolor: 'action.hover',
                     }
-                  }}
-                />
-              </Grid>
-              {!isParent && (
+                    label="Parent Node"
+                    sx={{ 
+                      width: '100%',
+                      m: 0,
+                      p: 1,
+                      borderRadius: 1,
+                      bgcolor: 'background.paper',
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                      }
+                    }}
+                  />
+                </Grid>
+                {!isParent && (
+                  <Grid item xs={12}>
+                    <Button
+                      fullWidth
+                      variant="contained"
+                      color="primary"
+                      size="small"
+                      onClick={() => {
+                        const event = new CustomEvent('node-connect-request', {
+                          detail: { nodeId: id }
+                        });
+                        window.dispatchEvent(event);
+                      }}
+                    >
+                      Connect to Parent Node
+                    </Button>
+                  </Grid>
+                )}
                 <Grid item xs={12}>
                   <Button
                     fullWidth
                     variant="contained"
-                    color="primary"
                     size="small"
-                    onClick={() => {
-                      const event = new CustomEvent('node-connect-request', {
-                        detail: { nodeId: id }
-                      });
-                      window.dispatchEvent(event);
-                    }}
+                    onClick={handleSaveSettings}
+                    disabled={saving}
                   >
-                    Connect to Parent Node
+                    {saving ? <CircularProgress size={20} /> : 'Save Settings'}
                   </Button>
                 </Grid>
-              )}
-              <Grid item xs={12}>
-                <Button
-                  fullWidth
-                  variant="contained"
-                  size="small"
-                  onClick={handleSaveSettings}
-                  disabled={saving}
-                >
-                  {saving ? <CircularProgress size={20} /> : 'Save Settings'}
-                </Button>
               </Grid>
-            </Grid>
-          </Box>
-        </TabPanel>
-        <TabPanel value={tabValue} index={2}>
-          {/* Stats content */}
-          <Box sx={{ height: '100%', overflow: 'auto' }}>
-            <Paper sx={{ p: 2, mb: 2 }}>
-              <Typography variant="h6" gutterBottom>Message Statistics</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={4}>
-                  <Box sx={{ 
-                    p: 2, 
-                    textAlign: 'center',
-                    bgcolor: 'success.light',
-                    borderRadius: 1
-                  }}>
-                    <Typography variant="h4" color="success.dark">
-                      {messageStats.successful}
-                    </Typography>
-                    <Typography variant="body2" color="success.dark">
-                      Successful
-                    </Typography>
-                  </Box>
+            </Box>
+          </TabPanel>
+          <TabPanel value={tabValue} index={2}>
+            {/* Stats content */}
+            <Box sx={{ height: '100%', overflow: 'auto' }}>
+              <Paper sx={{ p: 2, mb: 2 }}>
+                <Typography variant="h6" gutterBottom>Message Statistics</Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={4}>
+                    <Box sx={{ 
+                      p: 2, 
+                      textAlign: 'center',
+                      bgcolor: 'success.light',
+                      borderRadius: 1
+                    }}>
+                      <Typography variant="h4" color="success.dark">
+                        {messageStats.successful}
+                      </Typography>
+                      <Typography variant="body2" color="success.dark">
+                        Successful
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={4}>
+                    <Box sx={{ 
+                      p: 2, 
+                      textAlign: 'center',
+                      bgcolor: 'error.light',
+                      borderRadius: 1
+                    }}>
+                      <Typography variant="h4" color="error.dark">
+                        {messageStats.failed}
+                      </Typography>
+                      <Typography variant="body2" color="error.dark">
+                        Failed
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={4}>
+                    <Box sx={{ 
+                      p: 2, 
+                      textAlign: 'center',
+                      bgcolor: 'info.light',
+                      borderRadius: 1
+                    }}>
+                      <Typography variant="h4" color="info.dark">
+                        {messageStats.total}
+                      </Typography>
+                      <Typography variant="body2" color="info.dark">
+                        Total
+                      </Typography>
+                    </Box>
+                  </Grid>
                 </Grid>
-                <Grid item xs={4}>
-                  <Box sx={{ 
-                    p: 2, 
-                    textAlign: 'center',
-                    bgcolor: 'error.light',
-                    borderRadius: 1
-                  }}>
-                    <Typography variant="h4" color="error.dark">
-                      {messageStats.failed}
-                    </Typography>
-                    <Typography variant="body2" color="error.dark">
-                      Failed
-                    </Typography>
-                  </Box>
-                </Grid>
-                <Grid item xs={4}>
-                  <Box sx={{ 
-                    p: 2, 
-                    textAlign: 'center',
-                    bgcolor: 'info.light',
-                    borderRadius: 1
-                  }}>
-                    <Typography variant="h4" color="info.dark">
-                      {messageStats.total}
-                    </Typography>
-                    <Typography variant="body2" color="info.dark">
-                      Total
-                    </Typography>
-                  </Box>
-                </Grid>
-              </Grid>
-            </Paper>
+              </Paper>
 
-            <Paper sx={{ p: 2, mb: 2 }}>
-              <Typography variant="h6" gutterBottom>Performance Metrics</Typography>
-              <Grid container spacing={2}>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Success Rate
-                  </Typography>
-                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-                    <CircularProgress
-                      variant="determinate"
-                      value={messageStats.total > 0 
-                        ? (messageStats.successful / messageStats.total) * 100 
-                        : 0}
-                      size={40}
-                      sx={{ color: 'success.main' }}
-                    />
+              <Paper sx={{ p: 2, mb: 2 }}>
+                <Typography variant="h6" gutterBottom>Performance Metrics</Typography>
+                <Grid container spacing={2}>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Success Rate
+                    </Typography>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <CircularProgress
+                        variant="determinate"
+                        value={messageStats.total > 0 
+                          ? (messageStats.successful / messageStats.total) * 100 
+                          : 0}
+                        size={40}
+                        sx={{ color: 'success.main' }}
+                      />
+                      <Typography variant="h6">
+                        {messageStats.total > 0 
+                          ? Math.round((messageStats.successful / messageStats.total) * 100) 
+                          : 0}%
+                      </Typography>
+                    </Box>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Typography variant="body2" color="text.secondary">
+                      Average Response Time
+                    </Typography>
                     <Typography variant="h6">
-                      {messageStats.total > 0 
-                        ? Math.round((messageStats.successful / messageStats.total) * 100) 
-                        : 0}%
+                      {calculateAverageResponseTime(messages)}ms
                     </Typography>
-                  </Box>
+                  </Grid>
                 </Grid>
-                <Grid item xs={6}>
-                  <Typography variant="body2" color="text.secondary">
-                    Average Response Time
-                  </Typography>
+              </Paper>
+
+              <Paper sx={{ p: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
                   <Typography variant="h6">
-                    {calculateAverageResponseTime(messages)}ms
+                    Message History
                   </Typography>
-                </Grid>
-              </Grid>
-            </Paper>
-
-            <Paper sx={{ p: 2 }}>
-              <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-                <Typography variant="h6">
-                  Message History
-                </Typography>
-                <Button
-                  variant="outlined"
-                  color="warning"
-                  size="small"
-                  onClick={handleResetNode}
-                  startIcon={<RefreshIcon />}
-                >
-                  Reset Node
-                </Button>
-              </Box>
-              <List>
-                {data.messages.filter(m => m.role === 'assistant').map((message) => (
-                  <ListItem
-                    key={message.id}
-                    sx={{
-                      mb: 1,
-                      borderLeft: 4,
-                      borderColor: message.status === 'delivered' 
-                        ? 'success.main' 
-                        : message.status === 'failed'
-                        ? 'error.main'
-                        : 'warning.main',
-                      bgcolor: 'background.paper',
-                      borderRadius: 1,
-                    }}
+                  <Button
+                    variant="outlined"
+                    color="warning"
+                    size="small"
+                    onClick={handleResetNode}
+                    startIcon={<RefreshIcon />}
                   >
-                    <ListItemText
-                      primary={
-                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <Typography variant="subtitle2">
-                            {message.from === id ? 
-                              `To: Node ${message.to}` : 
-                              `From: Node ${message.from}`}
-                          </Typography>
-                          <Chip
-                            size="small"
-                            label={message.status}
-                            color={
-                              message.status === 'delivered' 
-                                ? 'success' 
-                                : message.status === 'failed'
-                                ? 'error'
-                                : 'warning'
-                            }
-                          />
-                        </Box>
-                      }
-                      secondary={
-                        <Box sx={{ mt: 1 }}>
-                          <Typography variant="body2" sx={{ mb: 0.5 }}>
-                            {message.content}
-                          </Typography>
-                          <Typography variant="caption" color="text.secondary">
-                            {format(message.timestamp, 'MM/dd/yyyy HH:mm:ss')}
-                          </Typography>
-                        </Box>
-                      }
-                    />
-                    {message.status === 'failed' && (
-                      <ListItemSecondaryAction>
-                        <Tooltip title="Retry sending message">
-                          <IconButton
-                            edge="end"
-                            size="small"
-                            onClick={() => {
-                              // Implement retry logic here
-                            }}
-                          >
-                            <RefreshIcon />
-                          </IconButton>
-                        </Tooltip>
-                      </ListItemSecondaryAction>
-                    )}
-                  </ListItem>
-                ))}
-              </List>
-            </Paper>
-          </Box>
-        </TabPanel>
-      </Box>
+                    Reset Node
+                  </Button>
+                </Box>
+                <List>
+                  {data.messages.filter(m => m.role === 'assistant').map((message) => (
+                    <ListItem
+                      key={message.id}
+                      sx={{
+                        mb: 1,
+                        borderLeft: 4,
+                        borderColor: message.status === 'delivered' 
+                          ? 'success.main' 
+                          : message.status === 'failed'
+                          ? 'error.main'
+                          : 'warning.main',
+                        bgcolor: 'background.paper',
+                        borderRadius: 1,
+                      }}
+                    >
+                      <ListItemText
+                        primary={
+                          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <Typography variant="subtitle2">
+                              {message.from === id ? 
+                                `To: Node ${message.to}` : 
+                                `From: Node ${message.from}`}
+                            </Typography>
+                            <Chip
+                              size="small"
+                              label={message.status}
+                              color={
+                                message.status === 'delivered' 
+                                  ? 'success' 
+                                  : message.status === 'failed'
+                                  ? 'error'
+                                  : 'warning'
+                              }
+                            />
+                          </Box>
+                        }
+                        secondary={
+                          <Box sx={{ mt: 1 }}>
+                            <Typography variant="body2" sx={{ mb: 0.5 }}>
+                              {message.content}
+                            </Typography>
+                            <Typography variant="caption" color="text.secondary">
+                              {format(message.timestamp, 'MM/dd/yyyy HH:mm:ss')}
+                            </Typography>
+                          </Box>
+                        }
+                      />
+                      {message.status === 'failed' && (
+                        <ListItemSecondaryAction>
+                          <Tooltip title="Retry sending message">
+                            <IconButton
+                              edge="end"
+                              size="small"
+                              onClick={() => {
+                                // Implement retry logic here
+                              }}
+                            >
+                              <RefreshIcon />
+                            </IconButton>
+                          </Tooltip>
+                        </ListItemSecondaryAction>
+                      )}
+                    </ListItem>
+                  ))}
+                </List>
+              </Paper>
+            </Box>
+          </TabPanel>
+        </Box>
 
-      <Snackbar
-        open={showValidation}
-        autoHideDuration={6000}
-        onClose={() => setShowValidation(false)}
-        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
-      >
-        <Alert 
-          onClose={() => setShowValidation(false)} 
-          severity={validationStatus?.type || 'info'}
-          sx={{ width: '100%' }}
+        <Snackbar
+          open={showValidation}
+          autoHideDuration={6000}
+          onClose={() => setShowValidation(false)}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
         >
-          {validationStatus?.message}
-        </Alert>
-      </Snackbar>
-    </Paper>
+          <Alert 
+            onClose={() => setShowValidation(false)} 
+            severity={validationStatus?.type || 'info'}
+            sx={{ width: '100%' }}
+          >
+            {validationStatus?.message}
+          </Alert>
+        </Snackbar>
+      </Paper>
+
+      <Dialog
+        open={connectDialogOpen}
+        onClose={() => setConnectDialogOpen(false)}
+        aria-labelledby="connect-dialog-title"
+      >
+        <DialogTitle id="connect-dialog-title">Connect to Parent Node</DialogTitle>
+        <DialogContent>
+          Are you sure you want to connect this node as a child node?
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setConnectDialogOpen(false)}>Cancel</Button>
+          <Button onClick={handleConnectConfirm} variant="contained" color="primary">
+            Connect
+          </Button>
+        </DialogActions>
+      </Dialog>
+    </>
   );
 };
 
