@@ -1,0 +1,29 @@
+{
+  "watch": [
+    "server.js",
+    "server/**/*"
+  ],
+  "ext": "js,json",
+  "ignore": [
+    "node_modules/**/*",
+    "dist/**/*",
+    "build/**/*",
+    "*.test.js",
+    "*.spec.js",
+    "coverage/**/*",
+    ".git/**/*",
+    "*.log",
+    "src/**/*",
+    "public/**/*"
+  ],
+  "delay": "3000",
+  "env": {
+    "NODE_ENV": "development"
+  },
+  "events": {
+    "restart": "echo \"Server restarted due to changes\""
+  },
+  "verbose": true,
+  "colours": true,
+  "legacy-watch": false
+} 
