@@ -1,24 +1,15 @@
 # AI Sandbox
 
-A React-based sandbox environment for AI interactions with various node types. This project provides a flexible interface for connecting different types of nodes (Chat, Notes, Image, Document, URL) and enabling communication between them.
+A node-based sandbox environment for AI interactions and content processing.
 
 ## Features
 
-- Interactive node-based interface
-- Multiple AI model support (Cohere, DeepSeek)
-- Note-taking functionality
-- Real-time node communication
-- Customizable system prompts
-- Temperature and token control
-- Error handling and validation
-
-## Node Types
-
-- **Chat Node**: Main interface for AI interactions
-- **Notes Node**: Text-based notepad for storing information
-- **Image Node**: Handles image content and descriptions
-- **Document Node**: Manages document content and metadata
-- **URL Node**: Processes web content
+- **Chat Node**: Interactive AI chat interface with support for multiple AI providers (Cohere, DeepSeek)
+- **URL Node**: Process and analyze web content
+- **Notes Node**: Create and manage notes from chat interactions
+- **Node Communication**: Real-time communication between different node types
+- **Dynamic Context**: Automatic context management based on connected nodes
+- **Note-Taking Mode**: Dedicated mode for converting chat interactions into structured notes
 
 ## Setup
 
@@ -27,30 +18,49 @@ A React-based sandbox environment for AI interactions with various node types. T
    ```bash
    npm install
    ```
-3. Set up your API keys:
-   - Cohere API key
-   - GitHub token (for DeepSeek)
-
-4. Start the development server:
-   ```bash
-   npm start
-   ```
+3. Set up your environment variables:
+   - Create a `.env` file
+   - Add your API keys:
+     ```
+     COHERE_API_KEY=your_cohere_key
+     GITHUB_TOKEN=your_github_token  # For DeepSeek
+     ```
 
 ## Usage
 
-1. Add nodes to the canvas
-2. Connect nodes by dragging edges between them
-3. Configure the Chat node with your API keys
-4. Start interacting with the AI
-5. Enable note-taking mode to automatically save responses
+1. Start the development server:
+   ```bash
+   npm start
+   ```
+2. Open your browser to the displayed URL
+3. Create nodes by dragging them from the toolbar
+4. Connect nodes by dragging between their ports
+5. Configure the Chat Node with your API keys in settings
 
-## Contributing
+## Node Types
 
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+### Chat Node
+- AI-powered chat interface
+- Supports multiple AI providers
+- Context-aware responses based on connected nodes
+- Note-taking mode for structured content
+
+### URL Node
+- Process web content
+- Extract metadata (title, description)
+- Share content with connected nodes
+
+### Notes Node
+- Create and manage notes
+- Receive content from Chat Node
+- Structured note storage
+
+## Development
+
+- Built with React and TypeScript
+- Uses Material-UI for components
+- Real-time node communication system
+- Extensible node architecture
 
 ## License
 

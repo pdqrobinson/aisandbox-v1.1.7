@@ -6,7 +6,9 @@ import {
   Paper,
   Typography,
   Button,
+  IconButton,
 } from '@mui/material';
+import { LinkOff as LinkOffIcon } from '@mui/icons-material';
 import { BaseNode } from './BaseNode';
 import { NotesNodeData } from '../../types/nodes';
 import { useCanvasStore } from '../../store/canvasStore';
@@ -25,7 +27,47 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
   
   const nodeCommunicationService = useMemo(() => NodeCommunicationService.getInstance(), []);
 
-  // Define handleSubmitNote first
+  // Define all handler functions first
+  const handleNodeConnection = useCallback((nodeId: string) => {
+    setConnectedNodes(prev => {
+      const updated = new Set(prev);
+      updated.add(nodeId);
+      return updated;
+    });
+    
+    messageBus.emit('update', {
+      senderId: id,
+      receiverId: nodeId,
+      content: notes.map(note => note.content).join('\n\n'),
+      type: 'content',
+      metadata: {
+        type: 'content',
+        nodeType: 'notesNode'
+      }
+    });
+  }, [id, notes]);
+
+  const handleNodeDisconnection = useCallback((nodeId: string) => {
+    setConnectedNodes(prev => {
+      const updated = new Set(prev);
+      updated.delete(nodeId);
+      return updated;
+    });
+  }, []);
+
+  const handleContentRequest = useCallback((requesterId: string) => {
+    messageBus.emit('update', {
+      senderId: id,
+      receiverId: requesterId,
+      content: notes.map(note => note.content).join('\n\n'),
+      type: 'content',
+      metadata: {
+        type: 'content',
+        nodeType: 'notesNode'
+      }
+    });
+  }, [id, notes]);
+
   const handleSubmitNote = useCallback((content: string) => {
     if (!content.trim()) return;
     
@@ -36,7 +78,6 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
     
     setNotes(prev => {
       const updatedNotes = [...prev, newNote];
-      // Update node data after state update
       updateNode(id, {
         ...data,
         notes: updatedNotes
@@ -44,6 +85,77 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
       return updatedNotes;
     });
   }, [id, data, updateNode]);
+
+  const handleDisconnectAll = useCallback(() => {
+    Array.from(connectedNodes).forEach(nodeId => {
+      messageBus.emit('disconnect', {
+        senderId: id,
+        receiverId: nodeId,
+        type: 'disconnect',
+        metadata: {
+          type: 'notesNode',
+          source: id,
+          target: nodeId
+        }
+      });
+    });
+
+    setConnectedNodes(new Set());
+  }, [id, connectedNodes]);
+
+  const handleSaveDraft = useCallback(() => {
+    console.log('Saving draft:', draftContent);
+    if (!draftContent.trim()) return;
+
+    const newNote = {
+      id: crypto.randomUUID(),
+      content: draftContent.trim()
+    };
+
+    setNotes(prev => {
+      const updatedNotes = [...prev, newNote];
+      console.log('Updating notes with new draft:', updatedNotes);
+      updateNode(id, {
+        ...data,
+        notes: updatedNotes,
+        hasDraft: false,
+        draftContent: ''
+      });
+      return updatedNotes;
+    });
+
+    setIsDraftMode(false);
+    setDraftContent('');
+
+    console.log('Notifying connected nodes about saved draft');
+    Array.from(connectedNodes).forEach(nodeId => {
+      nodeMessageService.sendNoteSave(id, nodeId, newNote.content);
+    });
+  }, [id, data, draftContent, connectedNodes, updateNode]);
+
+  const handleDiscardDraft = useCallback(() => {
+    setIsDraftMode(false);
+    setDraftContent('');
+  }, []);
+
+  const handleDeleteNote = useCallback((noteId: string) => {
+    setNotes(prev => {
+      const updatedNotes = prev.filter(note => note.id !== noteId);
+      updateNode(id, {
+        ...data,
+        notes: updatedNotes
+      });
+      return updatedNotes;
+    });
+  }, [id, data, updateNode]);
+
+  const handleKeyPress = useCallback((event: React.KeyboardEvent) => {
+    if (event.key === 'Enter' && !event.shiftKey) {
+      event.preventDefault();
+      handleSubmitNote(inputContent);
+      setInputContent('');
+    }
+  }, [inputContent, handleSubmitNote]);
 
   // Initialize notes from data
   useEffect(() => {
@@ -56,9 +168,8 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
   // Initialize node capabilities and communication
   useEffect(() => {
     console.log('NotesNode: Initializing node:', id);
-    // Register node capabilities
     nodeCapabilityService.registerCapabilities(id, [{
-      type: 'notes',
+      type: 'notesNode',
       metadata: {
         canEdit: true,
         canReceiveNotes: true,
@@ -67,7 +178,6 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
       }
     }]);
 
-    // Subscribe to events
     const unsubscribe = nodeCommunicationService.subscribeToEvents(
       id,
       ['connect', 'disconnect', 'request'],
@@ -79,17 +189,27 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
             if (message.metadata?.target === id) {
               console.log('NotesNode: Handling connection from:', message.senderId);
               handleNodeConnection(message.senderId);
-              // Send capabilities back to the connecting node
               messageBus.emit('connect', {
                 senderId: id,
                 receiverId: message.senderId,
                 content: 'Connection accepted',
                 type: 'connection',
                 metadata: {
-                  type: 'notes',
+                  type: 'notesNode',
                   capabilities: nodeCapabilityService.getCapabilities(id),
                   source: id,
                   target: message.senderId
+                }
+              });
+
+              messageBus.emit('update', {
+                senderId: id,
+                receiverId: message.senderId,
+                content: notes.map(note => note.content).join('\n\n'),
+                type: 'content',
+                metadata: {
+                  type: 'content',
+                  nodeType: 'notesNode'
                 }
               });
             }
@@ -113,7 +233,7 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
       unsubscribe();
       nodeCapabilityService.unregisterNode(id);
     };
-  }, [id]);
+  }, [id, notes, handleNodeConnection, handleNodeDisconnection, handleContentRequest]);
 
   // Handle incoming messages
   useEffect(() => {
@@ -123,7 +243,6 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
       console.log('NotesNode: Received note draft:', message);
       
       if (message.content) {
-        // Create a new note directly
         const newNote = {
           id: crypto.randomUUID(),
           content: message.content
@@ -131,7 +250,6 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         
         console.log('NotesNode: Adding new note:', newNote);
         
-        // Update notes state and node data
         setNotes(prev => {
           const updatedNotes = [...prev, newNote];
           updateNode(id, {
@@ -141,7 +259,6 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
           return updatedNotes;
         });
 
-        // Send confirmation back to sender
         nodeMessageService.sendNoteSave(id, message.senderId, message.content);
       }
     });
@@ -151,103 +268,6 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
       unsubscribeNoteDraft();
     };
   }, [id, data, updateNode]);
-
-  const handleNodeConnection = useCallback((nodeId: string) => {
-    setConnectedNodes(prev => {
-      const updated = new Set(prev);
-      updated.add(nodeId);
-      return updated;
-    });
-    
-    messageBus.emit('update', {
-      senderId: id,
-      receiverId: nodeId,
-      content: notes.map(note => note.content).join('\n\n'),
-      type: 'content',
-      metadata: {
-        type: 'content',
-        nodeType: 'notes'
-      }
-    });
-  }, [id, notes]);
-
-  const handleNodeDisconnection = useCallback((nodeId: string) => {
-    setConnectedNodes(prev => {
-      const updated = new Set(prev);
-      updated.delete(nodeId);
-      return updated;
-    });
-  }, []);
-
-  const handleContentRequest = useCallback((requesterId: string) => {
-    messageBus.emit('update', {
-      senderId: id,
-      receiverId: requesterId,
-      content: notes.map(note => note.content).join('\n\n'),
-      type: 'content',
-      metadata: {
-        type: 'content',
-        nodeType: 'notes'
-      }
-    });
-  }, [id, notes]);
-
-  const handleSaveDraft = useCallback(() => {
-    console.log('Saving draft:', draftContent);
-    if (!draftContent.trim()) return;
-
-    const newNote = {
-      id: crypto.randomUUID(),
-      content: draftContent.trim()
-    };
-
-    setNotes(prev => {
-      const updatedNotes = [...prev, newNote];
-      console.log('Updating notes with new draft:', updatedNotes);
-      // Update node data
-      updateNode(id, {
-        ...data,
-        notes: updatedNotes,
-        hasDraft: false,
-        draftContent: ''
-      });
-      return updatedNotes;
-    });
-
-    setIsDraftMode(false);
-    setDraftContent('');
-
-    // Notify the sender that the draft was saved
-    console.log('Notifying connected nodes about saved draft');
-    Array.from(connectedNodes).forEach(nodeId => {
-      nodeMessageService.sendNoteSave(id, nodeId, newNote.content);
-    });
-  }, [id, data, draftContent, connectedNodes, updateNode]);
-
-  const handleDiscardDraft = useCallback(() => {
-    setIsDraftMode(false);
-    setDraftContent('');
-  }, []);
-
-  const handleDeleteNote = useCallback((noteId: string) => {
-    setNotes(prev => {
-      const updatedNotes = prev.filter(note => note.id !== noteId);
-      // Update node data after state update
-      updateNode(id, {
-        ...data,
-        notes: updatedNotes
-      });
-      return updatedNotes;
-    });
-  }, [id, data, updateNode]);
-
-  const handleKeyPress = useCallback((event: React.KeyboardEvent) => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      handleSubmitNote(inputContent);
-      setInputContent('');
-    }
-  }, [inputContent, handleSubmitNote]);
 
   return (
     <BaseNode id={id} data={data} selected={selected}>
@@ -273,6 +293,22 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
           <Typography variant="subtitle2" color="text.secondary">
             Notes {connectedNodes.size > 0 ? `(${connectedNodes.size} connected)` : ''}
           </Typography>
+          {connectedNodes.size > 0 && (
+            <IconButton
+              size="small"
+              onClick={handleDisconnectAll}
+              title="Disconnect All Nodes"
+              sx={{
+                color: 'error.main',
+                '&:hover': {
+                  backgroundColor: 'error.main',
+                  color: 'error.contrastText',
+                },
+              }}
+            >
+              <LinkOffIcon fontSize="small" />
+            </IconButton>
+          )}
         </Box>
 
         {isDraftMode ? (

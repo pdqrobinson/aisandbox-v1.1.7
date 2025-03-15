@@ -73,6 +73,9 @@ export interface UrlNodeData extends BaseNodeData {
   url?: string;
   title?: string;
   description?: string;
+  thumbnail?: string;
+  content?: string;
+  lastFetched?: string;
 }
 
 export type NodeData = BaseNodeData & (
