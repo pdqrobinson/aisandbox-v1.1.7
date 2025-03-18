@@ -21,6 +21,7 @@ import {
   Slider,
   InputAdornment,
   ListSubheader,
+  Tooltip,
 } from '@mui/material';
 import { Send as SendIcon, Settings as SettingsIcon, Refresh as RefreshIcon, Delete as DeleteIcon, ContentCopy as ContentCopyIcon, Recycling as RecyclingIcon, Language as LanguageIcon, LinkOff as LinkOffIcon, Hub as HubIcon } from '@mui/icons-material';
 import { BaseNode } from './BaseNode';
@@ -54,23 +55,33 @@ const DEFAULT_ENVIRONMENT_PROMPT = `IMPORTANT: You are an AI assistant operating
 
 Your Environment:
 1. You exist as a Chat Node within a canvas-based sandbox
-2. You can ONLY interact with other nodes that are directly connected to you
+2. You can ONLY interact with other nodes that are DIRECTLY connected to you
 3. You have NO access to external systems, cloud infrastructure, or broader internet
 4. You are NOT running on Cohere's servers - you only use their API for text generation
 5. You are NOT a general AI assistant - you are specifically a Chat Node in this sandbox
 
 Your Capabilities:
-1. View and process content from connected nodes
+1. View and process content ONLY from DIRECTLY connected nodes
 2. Respond to user messages within the chat interface
-3. Take notes when connected to Notes nodes
-4. Process URL content when connected to URL nodes
-5. Generate responses based on connected nodes' content
+3. Take notes ONLY when connected to Notes nodes
+4. Process URL content ONLY when connected to URL nodes
+5. Generate responses based ONLY on connected nodes' content
 
-Rules:
+Critical Rules:
 1. NEVER claim to be a general AI or cloud-based system
-2. ONLY reference nodes and content that are actually connected
-3. ALWAYS acknowledge you are a Chat Node in a sandbox
-4. NEVER claim capabilities beyond your sandbox environment`;
+2. ONLY reference nodes that are EXPLICITLY listed in your current connections
+3. NEVER invent or assume the existence of nodes that aren't connected
+4. ALWAYS be precise about the number and types of your connected nodes
+5. NEVER claim capabilities from node types that aren't connected
+6. If asked about connections, ONLY list actually connected nodes
+7. ALWAYS verify your connected nodes before claiming capabilities
+
+Connection Handling:
+1. Before mentioning any node, verify it exists in your current connections
+2. Report EXACT numbers of connected nodes, never approximate or assume
+3. If no nodes are connected, explicitly state that you have no connections
+4. Only claim capabilities from nodes that are currently connected
+5. If a capability requires a specific node type, verify that node type is connected first`;
 
 // Add ErrorBoundary component
 class ChatNodeErrorBoundary extends Component<{ children: React.ReactNode }, { hasError: boolean; error: Error | null }> {
@@ -432,7 +443,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     });
   }, [id, connectedNodes, localSettings.environmentPrompt, safeData, updateNode, isUpdatingContext]);
 
-  // Update handleNodeConnection to immediately process node information
+  // Update handleNodeConnection to properly process node information
   const handleNodeConnection = useCallback((nodeId: string, metadata: any) => {
     console.log('Node connected:', { nodeId, metadata });
     
@@ -442,6 +453,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         ...metadata,
         type: metadata.type,
         content: metadata.content || null,
+        notes: metadata.notes || [], // Store notes array separately
         lastUpdated: Date.now()
       };
       
@@ -453,7 +465,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     updateEnvironmentContext();
 
     // Request initial content if not provided
-    if (!metadata.content) {
+    if (!metadata.content && !metadata.notes) {
       messageBus.emit('request', {
         senderId: id,
         receiverId: nodeId,
@@ -472,7 +484,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     updateEnvironmentContext();
   }, [updateEnvironmentContext]);
 
-  // Update handleNodeContentUpdate to immediately update context
+  // Update handleNodeContentUpdate to properly handle URL node content
   const handleNodeContentUpdate = useCallback((nodeId: string, content: any) => {
     console.log('Content update received:', { nodeId, content });
     
@@ -485,13 +497,27 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         return prev;
       }
 
-      const updatedNodeData = {
-        ...nodeData,
-        content: content,
-        lastUpdated: Date.now()
-      };
-
-      updated.set(nodeId, updatedNodeData);
+      // Special handling for URL node content
+      if (nodeData.type === 'urlNode') {
+        console.log('Processing URL node content:', content);
+        const urlContent = typeof content === 'object' ? content : { url: content };
+        const updatedNodeData = {
+          ...nodeData,
+          content: urlContent,
+          lastUpdated: Date.now()
+        };
+        updated.set(nodeId, updatedNodeData);
+      } else {
+        // Handle other node types
+        const updatedNodeData = {
+          ...nodeData,
+          content: content,
+          notes: Array.isArray(content) ? content : nodeData.notes,
+          lastUpdated: Date.now()
+        };
+        updated.set(nodeId, updatedNodeData);
+      }
+      
       return updated;
     });
 
@@ -530,45 +556,53 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     }, 100);
   }, [id]);
 
-  // Update getEnvironmentContext to be more explicit about connected nodes
+  // Update getEnvironmentContext to properly display URL node content
   const getEnvironmentContext = useCallback(() => {
     const connectedNodesList = Array.from(connectedNodes.entries());
     console.log('Building environment context with nodes:', connectedNodesList);
 
-    let context = '';
+    let context = '\nCurrent Connected Nodes Status:\n';
+    context += `Total Connected Nodes: ${connectedNodes.size}\n`;
 
-    // Process URL nodes first
-    const urlNodes = connectedNodesList.filter(([_, data]) => data.type === 'urlNode');
-    if (urlNodes.length > 0) {
-      context += '\nConnected URL nodes:\n';
-      urlNodes.forEach(([nodeId, data]) => {
-        context += `- URL Node (${nodeId}):\n`;
-        if (data.content) {
-          context += `  URL: ${data.content.url}\n`;
-          if (data.content.title) context += `  Title: ${data.content.title}\n`;
-          if (data.content.description) context += `  Description: ${data.content.description}\n`;
-        }
-      });
+    if (connectedNodes.size === 0) {
+      context += '\nNo nodes are currently connected to this Chat Node.\n';
+      context += 'IMPORTANT: You cannot access any external content or capabilities until nodes are connected.\n';
+      return context;
     }
 
-    // Process Notes nodes
-    const notesNodes = connectedNodesList.filter(([_, data]) => data.type === 'notesNode');
-    if (notesNodes.length > 0) {
-      context += '\nConnected Notes nodes:\n';
-      notesNodes.forEach(([nodeId, data]) => {
-        context += `- Notes Node (${nodeId}):\n`;
-        if (data.content) {
-          context += `  Content: ${data.content}\n`;
-        }
-      });
-    }
+    // List all connected nodes
+    context += '\nConnected Nodes:\n';
+    connectedNodesList.forEach(([nodeId, data]) => {
+      console.log('Processing node:', { nodeId, type: data.type, content: data.content });
+      
+      context += `- Type: ${data.type}\n`;
+      context += `  Node ID: ${nodeId}\n`;
+      
+      // Add content based on node type
+      if (data.type === 'urlNode') {
+        const urlData = data.content || {};
+        console.log('URL Node data:', urlData);
+        
+        // Handle different URL content formats
+        context += `  URL: ${urlData.url || 'Not set'}\n`;
+        if (urlData.title) context += `  Title: ${urlData.title}\n`;
+        if (urlData.description) context += `  Description: ${urlData.description}\n`;
+      } else if (data.type === 'notesNode') {
+        const notes = data.notes || [];
+        context += `  Notes Count: ${notes.length}\n`;
+      }
+      context += '---\n';
+    });
 
-    // Add explicit instructions for the AI
-    context += '\nInstructions for AI:\n';
-    context += '1. You have direct access to all connected nodes and their content.\n';
-    context += '2. For URL nodes: Use the content directly from the context above.\n';
-    context += '3. Do not try to detect or query nodes - the information is already provided.\n';
-    context += '4. Respond based on the actual nodes and content shown above.\n';
+    // Add strict instructions
+    context += '\nCRITICAL INSTRUCTIONS:\n';
+    context += '1. You must ONLY reference the nodes listed above.\n';
+    context += '2. Do NOT invent or assume the existence of any nodes not explicitly listed.\n';
+    context += '3. When describing your connections, be precise about the number and types of nodes.\n';
+    context += '4. Each node listed above is a real, active connection - do not ignore or add to them.\n';
+    context += '5. If asked about your connections, only mention these specific nodes and their actual capabilities.\n';
+    context += '6. NEVER make assumptions about node content - only report what is explicitly provided.\n';
+    context += '7. For URL nodes, only reference the exact URL shown - do not make assumptions about the website content.\n';
 
     console.log('Final environment context:', context);
     return context;
@@ -978,6 +1012,11 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         }
       }
 
+      // Disable note-taking mode after successful note creation
+      if (noteSent) {
+        setIsNoteTakingEnabled(false);
+      }
+
       // Return a simple confirmation message for the chat
       return noteSent ? "Note has been sent to the Notes node for review." : "Failed to send note to connected nodes. Please try again.";
     } catch (error) {
@@ -1121,6 +1160,11 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
           }
         }
 
+        // Disable note-taking mode after successful note creation
+        if (noteSent) {
+          setIsNoteTakingEnabled(false);
+        }
+
         // Only show confirmation message in chat
         const confirmationMessage = {
           id: crypto.randomUUID(),
@@ -1225,155 +1269,21 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     const systemStatus = {
       id: crypto.randomUUID(),
       role: 'system' as const,
-      content: '=== System Node Status ===\n' +
+      content: '=== Node Connection Status ===\n' +
+        `Total Connected Nodes: ${connectedNodes.size}\n\n` +
         Array.from(connectedNodes.entries()).map(([nodeId, data]) => {
-          // Enhanced URL node content detection
-          const isUrlNode = data.type === 'urlNode' || data.type === 'url';
-          
-          // Debug the raw node data structure
-          console.log('Raw Node Data:', {
-            nodeId,
-            type: data.type,
-            content: data.content,
-            data: data.data,
-            capabilities: data.capabilities,
-            fullData: data
-          });
-
-          // Extract URL content from all possible locations
-          let urlContent = null;
-          if (isUrlNode) {
-            // Try all possible content locations
-            if (typeof data.content === 'string') {
-              urlContent = { url: data.content };
-            } else if (data.content?.url) {
-              urlContent = data.content;
-            } else if (data.data?.content?.url) {
-              urlContent = data.data.content;
-            } else if (data.data?.url) {
-              urlContent = data.data;
-            } else if (data.url) {
-              urlContent = data;
-            }
-
-            // Debug URL content extraction
-            console.log('URL Content Extraction:', {
-              nodeId,
-              urlContent,
-              contentType: typeof data.content,
-              hasDataContent: Boolean(data.data?.content),
-              hasDirectUrl: Boolean(data.url)
-            });
-          }
-
-          // Check for content in any field
-          const hasContent = isUrlNode && (
-            Boolean(urlContent?.url) ||
-            Boolean(data.content?.url) ||
-            Boolean(data.data?.content?.url) ||
-            Boolean(data.data?.url) ||
-            Boolean(data.url) ||
-            (typeof data.content === 'string' && data.content.length > 0)
-          );
-
-          // Format node details
-          return `Node ${nodeId}:\n` +
-            `- Type: ${data.type}\n` +
-            `- Capabilities: ${data.capabilities?.map(cap => cap.type).join(', ') || 'none'}\n` +
-            `- Has Content: ${hasContent}\n` +
-            `- Content Details: ${isUrlNode 
-              ? `\n    URL: ${urlContent?.url || data.content?.url || data.data?.content?.url || data.data?.url || data.url || 'none'}\n    Title: ${urlContent?.title || data.content?.title || data.data?.content?.title || 'none'}\n    Description: ${urlContent?.description || data.content?.description || data.data?.content?.description || 'none'}`
-              : 'n/a'}\n` +
-            `- Raw Content Available: ${Boolean(data.content) || Boolean(data.data?.content) || Boolean(data.url)}\n` +
-            `- Last Updated: ${new Date(data.lastUpdated || Date.now()).toLocaleString()}\n`;
+          return `Type: ${data.type}\nNode ID: ${nodeId}\n---`;
         }).join('\n'),
-      timestamp: Date.now(),
-    };
-
-    // AI check of its awareness
-    const userMessage = {
-      id: crypto.randomUUID(),
-      role: 'user' as const,
-      content: "What nodes are currently connected to you? Please list each node, its type, and what content or capabilities you can access from it. Be specific and only mention nodes that are actually connected.",
       timestamp: Date.now(),
     };
 
     // Update messages with system status
     updateNode(id, {
       ...safeData,
-      messages: [...(safeData.messages || []), systemStatus, userMessage],
+      messages: [...(safeData.messages || []), systemStatus],
     });
 
-    // Get AI response about connected nodes
-    try {
-      const systemContext = [
-        safeData.settings.systemPrompt || localSettings.systemPrompt,
-        "\nCRITICAL ENVIRONMENT CONTEXT:",
-        "You are a Chat Node in a sandbox environment. You can ONLY interact with directly connected nodes.",
-        getEnvironmentContext(),
-        "\nIMPORTANT: This is a node status check. Be precise and accurate about connected nodes.",
-        "\nREMINDER: You are a Chat Node in a sandbox. Only reference connected nodes and their content."
-      ].join('\n');
-
-      const chatHistory = [
-        {
-          role: 'System',
-          message: systemContext
-        }
-      ];
-
-      const response = await fetch('https://api.cohere.ai/v1/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${safeData.settings.apiKey}`,
-          'Accept': 'application/json'
-        },
-        body: JSON.stringify({
-          message: userMessage.content,
-          model: safeData.settings.model,
-          temperature: 0.1, // Lower temperature for more precise response
-          max_tokens: safeData.settings.maxTokens,
-          chat_history: chatHistory,
-          stream: false
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to get AI response');
-      }
-
-      const result = await response.json();
-      const responseText = result.text || (result.message && result.message.text);
-
-      const aiMessage = {
-        id: crypto.randomUUID(),
-        role: 'assistant' as const,
-        content: responseText,
-        timestamp: Date.now(),
-      };
-
-      // Update messages with AI response
-      updateNode(id, {
-        ...safeData,
-        messages: [...(safeData.messages || []), systemStatus, userMessage, aiMessage],
-      });
-
-    } catch (error) {
-      console.error('Error checking node status:', error);
-      const errorMessage = {
-        id: crypto.randomUUID(),
-        role: 'error' as const,
-        content: error instanceof Error ? error.message : 'Failed to check node status',
-        timestamp: Date.now(),
-      };
-
-      updateNode(id, {
-        ...safeData,
-        messages: [...(safeData.messages || []), systemStatus, userMessage, errorMessage],
-      });
-    }
-  }, [id, safeData, connectedNodes, getEnvironmentContext, localSettings.systemPrompt, updateNode]);
+  }, [id, safeData, connectedNodes, updateNode]);
 
   return (
     <ChatNodeErrorBoundary>
@@ -1402,11 +1312,36 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
               <IconButton
                 size="small"
                 onClick={checkNodeStatus}
-                title="Check Node Status"
+                title={`Connected Nodes: ${connectedNodes.size}`}
                 color="primary"
-                sx={{ mr: 1 }}
+                sx={{ 
+                  mr: 1,
+                  position: 'relative'
+                }}
               >
                 <HubIcon />
+                {connectedNodes.size > 0 && (
+                  <Box
+                    sx={{
+                      position: 'absolute',
+                      top: -4,
+                      right: -4,
+                      bgcolor: 'primary.main',
+                      color: 'primary.contrastText',
+                      borderRadius: '50%',
+                      width: 16,
+                      height: 16,
+                      fontSize: '0.75rem',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      border: '1px solid',
+                      borderColor: 'background.paper',
+                    }}
+                  >
+                    {connectedNodes.size}
+                  </Box>
+                )}
               </IconButton>
               {hasConnectedNotesNode && (
                 <Button
@@ -1509,35 +1444,34 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                           position: 'relative',
                         }}
                       >
-                        <ListItemText
-                          primary={message.content}
-                          sx={{ 
-                            m: 0,
-                            '& .MuiTypography-root': {
-                              fontSize: '0.8rem',
-                              lineHeight: 1.4,
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                          <Typography
+                            variant="body2"
+                            sx={{
                               whiteSpace: 'pre-wrap',
-                              wordBreak: 'break-word'
-                            }
-                          }}
-                        />
-                        <IconButton
-                          size="small"
-                          onClick={() => handleCopyMessage(message.content)}
-                          sx={{
-                            position: 'absolute',
-                            right: 4,
-                            top: 4,
-                            color: message.role === 'user' ? 'primary.contrastText' : 'primary.main',
-                            opacity: 0.7,
-                            '&:hover': {
-                              opacity: 1
-                            }
-                          }}
-                          title="Copy message"
-                        >
-                          <ContentCopyIcon fontSize="small" />
-                        </IconButton>
+                              wordBreak: 'break-word',
+                              flex: 1,
+                            }}
+                          >
+                            {message.content}
+                          </Typography>
+                          <Tooltip title="Copy message">
+                            <IconButton
+                              size="small"
+                              onClick={() => handleCopyMessage(message.content)}
+                              sx={{
+                                ml: 1,
+                                opacity: 0.6,
+                                '&:hover': { opacity: 1 },
+                              }}
+                            >
+                              <ContentCopyIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                        </Box>
+                        <Typography variant="caption" color="text.secondary" sx={{ alignSelf: 'flex-end' }}>
+                          {new Date(message.timestamp).toLocaleTimeString()}
+                        </Typography>
                       </Paper>
                     )}
                   </Box>

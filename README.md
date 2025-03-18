@@ -1,67 +1,85 @@
 # AI Sandbox
 
-A node-based sandbox environment for AI interactions and content processing.
+A visual programming environment for AI-powered nodes that can be connected together to create complex workflows.
 
 ## Features
 
-- **Chat Node**: Interactive AI chat interface with support for multiple AI providers (Cohere, DeepSeek)
-- **URL Node**: Process and analyze web content
-- **Notes Node**: Create and manage notes from chat interactions
-- **Node Communication**: Real-time communication between different node types
-- **Dynamic Context**: Automatic context management based on connected nodes
-- **Note-Taking Mode**: Dedicated mode for converting chat interactions into structured notes
+- Visual node-based programming interface
+- Resizable nodes with drag-and-drop functionality
+- Multiple node types (Chat, Notes, URL, etc.)
+- Real-time node communication
+- Dark theme UI
+- Responsive layout with collapsible sidebar
 
-## Setup
+## Tech Stack
 
-1. Clone the repository
+- React
+- TypeScript
+- Material-UI
+- React Flow
+- Express.js
+- Node.js
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js (v16 or higher)
+- npm (v7 or higher)
+
+### Installation
+
+1. Clone the repository:
+```bash
+git clone [your-repo-url]
+cd ai-sandbox
+```
+
 2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Set up your environment variables:
-   - Create a `.env` file
-   - Add your API keys:
-     ```
-     COHERE_API_KEY=your_cohere_key
-     GITHUB_TOKEN=your_github_token  # For DeepSeek
-     ```
+```bash
+npm install
+```
 
-## Usage
+3. Start the development server:
+```bash
+npm run dev:all
+```
 
-1. Start the development server:
-   ```bash
-   npm start
-   ```
-2. Open your browser to the displayed URL
-3. Create nodes by dragging them from the toolbar
-4. Connect nodes by dragging between their ports
-5. Configure the Chat Node with your API keys in settings
+This will start both the frontend (Vite) and backend (Express) servers:
+- Frontend: http://localhost:3001
+- Backend: http://localhost:3000
 
-## Node Types
+### Production Build
 
-### Chat Node
-- AI-powered chat interface
-- Supports multiple AI providers
-- Context-aware responses based on connected nodes
-- Note-taking mode for structured content
+To create a production build:
 
-### URL Node
-- Process web content
-- Extract metadata (title, description)
-- Share content with connected nodes
+```bash
+npm run build
+```
 
-### Notes Node
-- Create and manage notes
-- Receive content from Chat Node
-- Structured note storage
+To start the production server:
 
-## Development
+```bash
+npm start
+```
 
-- Built with React and TypeScript
-- Uses Material-UI for components
-- Real-time node communication system
-- Extensible node architecture
+## Project Structure
+
+```
+ai-sandbox/
+├── server/           # Backend Express server
+├── src/
+│   ├── components/   # React components
+│   ├── contexts/     # React contexts
+│   ├── services/     # API services
+│   ├── store/        # State management
+│   ├── styles/       # Global styles
+│   ├── types/        # TypeScript types
+│   └── utils/        # Utility functions
+├── public/           # Static assets
+└── package.json      # Project configuration
+```
 
 ## License
 
-MIT License 
+MIT 

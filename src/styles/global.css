@@ -10,6 +10,16 @@ html, body, #root {
   overflow: hidden;
 }
 
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #121212;
+  color: #ffffff;
+}
+
 .react-flow__node {
   width: auto !important;
   border-radius: 4px;
@@ -50,4 +60,25 @@ html, body, #root {
 
 .react-flow__controls-button:hover {
   background-color: #333 !important;
+}
+
+/* Drawer styles */
+.MuiDrawer-paper {
+  background-color: #1e1e1e !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+/* AppBar styles */
+.MuiAppBar-root {
+  background-color: #1e1e1e !important;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.12) !important;
+}
+
+/* Fix for node dragging */
+.nodrag {
+  cursor: se-resize !important;
+}
+
+.react-flow__node {
+  cursor: move !important;
 } 

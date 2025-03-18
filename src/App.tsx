@@ -1,33 +1,16 @@
 import React from 'react';
-import { ThemeProvider, createTheme } from '@mui/material';
+import { ThemeProvider } from '@mui/material';
+import theme from './theme';
+import { SandboxProvider } from './contexts/SandboxContext';
 import { MainLayout } from './components/Layout/MainLayout';
-
-const theme = createTheme({
-  palette: {
-    mode: 'dark',
-    primary: {
-      main: '#90caf9',
-    },
-    background: {
-      default: '#121212',
-      paper: '#1e1e1e',
-    },
-  },
-  components: {
-    MuiButton: {
-      styleOverrides: {
-        root: {
-          textTransform: 'none',
-        },
-      },
-    },
-  },
-});
+import './styles/resizable.css';
 
 function App() {
   return (
     <ThemeProvider theme={theme}>
-      <MainLayout />
+      <SandboxProvider>
+        <MainLayout />
+      </SandboxProvider>
     </ThemeProvider>
   );
 }

@@ -6,6 +6,8 @@ import { NodeData } from '../../types/nodes';
 import { useCanvasStore } from '../../store/canvasStore';
 import { ConnectionStatus } from './ConnectionStatus';
 import { useReactFlow } from 'reactflow';
+import { ResizableBox } from 'react-resizable';
+import 'react-resizable/css/styles.css';
 
 export const BaseNode: React.FC<NodeProps<NodeData>> = ({
   id,
@@ -16,6 +18,7 @@ export const BaseNode: React.FC<NodeProps<NodeData>> = ({
   const [anchorEl, setAnchorEl] = React.useState<null | HTMLElement>(null);
   const [isEditingLabel, setIsEditingLabel] = React.useState(false);
   const [tempLabel, setTempLabel] = React.useState(data.label || '');
+  const [dimensions, setDimensions] = React.useState({ width: 300, height: 400 });
   const removeNode = useCanvasStore((state) => state.removeNode);
   const updateNode = useCanvasStore((state) => state.updateNode);
   const { getEdges } = useReactFlow();
@@ -84,85 +87,144 @@ export const BaseNode: React.FC<NodeProps<NodeData>> = ({
   }, [id, getEdges]);
 
   return (
-    <>
+    <div style={{ position: 'relative' }}>
       <Handle type="target" position={Position.Top} />
-      <Card
-        sx={{
-          minWidth: 250,
-          maxWidth: 350,
-          border: selected ? '2px solid #90caf9' : 'none',
+      <ResizableBox
+        width={dimensions.width}
+        height={dimensions.height}
+        onResize={(e, { size }) => {
+          e.stopPropagation();
+          setDimensions({
+            width: Math.max(200, Math.min(800, size.width)),
+            height: Math.max(200, Math.min(800, size.height))
+          });
         }}
+        minConstraints={[200, 200]}
+        maxConstraints={[800, 800]}
+        resizeHandles={['se']}
+        draggableOpts={{ grid: [1, 1] }}
+        handle={
+          <div
+            className="nodrag react-resizable-handle react-resizable-handle-se"
+            style={{
+              width: 20,
+              height: 20,
+              bottom: 0,
+              right: 0,
+              cursor: 'se-resize',
+              position: 'absolute',
+              backgroundColor: selected ? 'rgba(144, 202, 249, 0.2)' : 'transparent',
+              borderRadius: '0 0 4px 0',
+              zIndex: 2
+            }}
+          />
+        }
       >
-        <CardHeader
-          action={
-            <IconButton
-              size="small"
-              onClick={handleMenuOpen}
-              sx={{ marginRight: -1 }}
-            >
-              <MoreVertIcon />
-            </IconButton>
-          }
-          title={
-            isEditingLabel ? (
-              <TextField
-                fullWidth
-                size="small"
-                value={tempLabel}
-                onChange={(e) => setTempLabel(e.target.value)}
-                onBlur={handleLabelSubmit}
-                onKeyDown={handleLabelKeyPress}
-                placeholder={`${data.type || 'Node'} ${id.slice(0, 4)}`}
-                autoFocus
-                onClick={(e) => e.stopPropagation()}
-                sx={{
-                  '& .MuiInputBase-input': {
-                    fontSize: '1rem',
-                    padding: '2px 4px',
-                  }
-                }}
-              />
-            ) : (
-              <Box>
-                <Typography
-                  variant="h6"
-                  component="div"
-                  onClick={handleLabelClick}
-                  sx={{
-                    cursor: 'pointer',
-                    '&:hover': {
-                      bgcolor: 'action.hover',
-                      borderRadius: 0.5,
-                    },
-                    whiteSpace: 'nowrap',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    padding: '2px 4px',
-                  }}
-                >
-                  {data.label || `${data.type || 'Node'} ${id.slice(0, 4)}`}
-                </Typography>
-                <Typography
-                  variant="caption"
-                  sx={{
-                    display: 'block',
-                    color: 'text.secondary',
-                    pl: '4px',
-                    fontSize: '0.7rem',
-                  }}
-                >
-                  ID: {id}
-                </Typography>
-              </Box>
-            )
-          }
+        <Card
           sx={{
-            '& .MuiCardHeader-content': { overflow: 'hidden' },
-            pb: 0, // Reduce padding at bottom of header
+            width: '100%',
+            height: '100%',
+            border: selected ? '2px solid #90caf9' : 'none',
+            position: 'relative',
+            display: 'flex',
+            flexDirection: 'column',
+            pr: 2,
+            pl: 2,
+            pb: 2,
+            '& > *': {
+              width: '100%',
+              minHeight: 0
+            }
           }}
-        />
-        <CardContent>{children}</CardContent>
-      </Card>
+        >
+          <CardHeader
+            action={
+              <IconButton
+                size="small"
+                onClick={handleMenuOpen}
+                sx={{ marginRight: -1 }}
+              >
+                <MoreVertIcon />
+              </IconButton>
+            }
+            title={
+              isEditingLabel ? (
+                <TextField
+                  fullWidth
+                  size="small"
+                  value={tempLabel}
+                  onChange={(e) => setTempLabel(e.target.value)}
+                  onBlur={handleLabelSubmit}
+                  onKeyDown={handleLabelKeyPress}
+                  placeholder={`${data.type || 'Node'} ${id.slice(0, 4)}`}
+                  autoFocus
+                  onClick={(e) => e.stopPropagation()}
+                  sx={{
+                    '& .MuiInputBase-input': {
+                      fontSize: '1rem',
+                      padding: '2px 4px',
+                    }
+                  }}
+                />
+              ) :
+                <Box>
+                  <Typography
+                    variant="h6"
+                    component="div"
+                    onClick={handleLabelClick}
+                    sx={{
+                      cursor: 'pointer',
+                      '&:hover': {
+                        bgcolor: 'action.hover',
+                        borderRadius: 0.5,
+                      },
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      padding: '2px 4px',
+                    }}
+                  >
+                    {data.label || `${data.type || 'Node'} ${id.slice(0, 4)}`}
+                  </Typography>
+                  <Typography
+                    variant="caption"
+                    sx={{
+                      display: 'block',
+                      color: 'text.secondary',
+                      pl: '4px',
+                      fontSize: '0.7rem',
+                    }}
+                  >
+                    ID: {id}
+                  </Typography>
+                </Box>
+            }
+            sx={{
+              '& .MuiCardHeader-content': { overflow: 'hidden' },
+              pb: 0,
+              flexShrink: 0
+            }}
+          />
+          <CardContent sx={{ 
+            flex: 1,
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+            p: 0,
+            '&:last-child': {
+              pb: 0
+            },
+            minHeight: 0,
+            '& > *': {
+              width: '100%',
+              height: '100%',
+              minHeight: 0
+            }
+          }}>
+            {children}
+          </CardContent>
+        </Card>
+      </ResizableBox>
       <Handle type="source" position={Position.Bottom} />
 
       <ConnectionStatus connectedNodes={connectedNodes} />
@@ -181,6 +243,6 @@ export const BaseNode: React.FC<NodeProps<NodeData>> = ({
         </MenuItem>
         <MenuItem onClick={handleDelete}>Delete</MenuItem>
       </Menu>
-    </>
+    </div>
   );
 }; 
