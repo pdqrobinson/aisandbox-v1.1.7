@@ -954,14 +954,15 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
             <Box sx={{ display: 'flex', gap: 1 }}>
               {hasNotesNode || connectedNoteIds.length > 0 ? (
                 <>
-                  <Tooltip title={`Notes Connected (${connectedNoteIds.length})`}>
-                    <IconButton
+                  <Tooltip title="Notes Connected">
+                    <Chip
+                      icon={<NoteIcon fontSize="small" />}
+                      label={`Notes Connected (${connectedNoteIds.length})`}
                       size="small"
                       color="primary"
+                      variant="outlined"
                       onClick={() => console.log('Connected note IDs:', connectedNoteIds)}
-                    >
-                      <NoteIcon fontSize="small" />
-                    </IconButton>
+                    />
                   </Tooltip>
                   <Tooltip title={autoTakeNotes ? "Disable Auto Note Taking" : "Enable Auto Note Taking"}>
                     <IconButton

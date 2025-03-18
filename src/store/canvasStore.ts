@@ -15,6 +15,7 @@ interface CanvasState {
   updateEdge: (edge: Edge) => void;
   getNode: (nodeId: string) => Node<NodeData> | undefined;
   clear: () => void;
+  onConnect: (connection: Connection) => void;
 }
 
 export const useCanvasStore = create<CanvasState>((set, get) => ({
@@ -200,5 +201,69 @@ export const useCanvasStore = create<CanvasState>((set, get) => ({
     });
 
     set({ nodes: [], edges: [] });
+  },
+
+  onConnect: (connection: Connection) => {
+    console.log('canvasStore: Connection established:', connection);
+    
+    // Make sure to emit a connect event on the messageBus
+    if (typeof messageBus !== 'undefined') {
+      messageBus.emit('connect', {
+        source: connection.source,
+        target: connection.target,
+        sourceType: connection.sourceType,
+        targetType: connection.targetType
+      });
+    }
+
+    if (!connection.source || !connection.target) return;
+
+    const sourceNode = get().nodes.find(node => node.id === connection.source);
+    const targetNode = get().nodes.find(node => node.id === connection.target);
+
+    if (!sourceNode || !targetNode) return;
+
+    // Emit connection events for both nodes
+    messageBus.emit('connect', {
+      senderId: connection.source,
+      receiverId: connection.target,
+      content: 'Nodes connected',
+      type: 'connection',
+      metadata: {
+        type: sourceNode.type,
+        source: connection.source,
+        target: connection.target,
+        sourceType: sourceNode.type,
+        targetType: targetNode.type
+      }
+    });
+
+    messageBus.emit('connect', {
+      senderId: connection.target,
+      receiverId: connection.source,
+      content: 'Nodes connected',
+      type: 'connection',
+      metadata: {
+        type: targetNode.type,
+        source: connection.target,
+        target: connection.source,
+        sourceType: targetNode.type,
+        targetType: sourceNode.type
+      }
+    });
+
+    // Update the edge in the store
+    const newEdge: Edge = {
+      id: `${connection.source}-${connection.target}`,
+      source: connection.source,
+      target: connection.target,
+      type: 'default',
+      animated: false,
+      style: { stroke: '#555' }
+    };
+
+    set(state => ({
+      edges: [...state.edges, newEdge]
+    }));
   }
 })); 
