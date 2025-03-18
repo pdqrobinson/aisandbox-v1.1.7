@@ -12,6 +12,7 @@ import {
 import {
   LinkOff as LinkOffIcon,
   Delete as DeleteIcon,
+  Send as SendIcon,
 } from '@mui/icons-material';
 import { BaseNode } from './BaseNode';
 import { NotesNodeData } from '../../types/nodes';
@@ -26,7 +27,7 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
   const [isDraftMode, setIsDraftMode] = useState(false);
   const [draftContent, setDraftContent] = useState('');
   const [inputContent, setInputContent] = useState('');
-  const [notes, setNotes] = useState<Array<{ id: string; content: string }>>([]);
+  const [notes, setNotes] = useState<Array<{ id: string; content: string; inContext?: boolean }>>([]);
   const [connectedNodes, setConnectedNodes] = useState<Set<string>>(new Set());
   const [lastAddedNote, setLastAddedNote] = useState<string | null>(null);
   const [lastMessage, setLastMessage] = useState<string | null>(null);
@@ -215,6 +216,87 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
       setInputContent('');
     }
   }, [inputContent, handleSubmitNote]);
+
+  const handleSendToAI = useCallback((noteContent: string) => {
+    console.log('NotesNode: Sending note to AI:', noteContent);
+    
+    if (connectedNodes.size === 0) {
+      console.warn('NotesNode: No chat nodes connected to send note to AI');
+      return;
+    }
+    
+    // Send note to all connected nodes
+    Array.from(connectedNodes).forEach(nodeId => {
+      messageBus.emit('send_to_ai', {
+        senderId: id,
+        receiverId: nodeId,
+        type: 'context',
+        content: noteContent,
+        metadata: {
+          type: 'note_context',
+          source: id,
+          timestamp: new Date().toISOString()
+        }
+      });
+      
+      console.log('NotesNode: Sent note to AI via node:', nodeId);
+    });
+    
+    // Show feedback
+    setLastMessage('Note sent to AI');
+    setTimeout(() => setLastMessage(null), 3000);
+  }, [id, connectedNodes]);
+
+  const handleToggleContext = useCallback((noteId: string, noteContent: string) => {
+    console.log('NotesNode: Toggling note in AI context:', noteId);
+    
+    // Update the note's status in the state
+    setNotes(prev => {
+      const updatedNotes = prev.map(note => 
+        note.id === noteId ? { ...note, inContext: !note.inContext } : note
+      );
+      
+      // Also update the node data for persistence
+      updateNode(id, {
+        ...data,
+        notes: updatedNotes
+      });
+      
+      return updatedNotes;
+    });
+    
+    if (connectedNodes.size === 0) {
+      console.warn('NotesNode: No chat nodes connected for context update');
+      return;
+    }
+    
+    // Find the note to check if it's being added or removed from context
+    const note = notes.find(n => n.id === noteId);
+    const adding = !note?.inContext; // If it's currently not in context, we're adding it
+    
+    // Send context update to all connected chat nodes
+    Array.from(connectedNodes).forEach(nodeId => {
+      messageBus.emit('send_to_ai', {
+        senderId: id,
+        receiverId: nodeId,
+        type: 'context',
+        content: noteContent,
+        metadata: {
+          type: 'note_context',
+          source: id,
+          action: adding ? 'add' : 'remove',
+          noteId: noteId,
+          timestamp: new Date().toISOString()
+        }
+      });
+      
+      console.log(`NotesNode: ${adding ? 'Added to' : 'Removed from'} AI context via node:`, nodeId);
+    });
+    
+    // Show feedback
+    setLastMessage(`Note ${adding ? 'added to' : 'removed from'} AI context`);
+    setTimeout(() => setLastMessage(null), 3000);
+  }, [id, connectedNodes, notes, data, updateNode]);
 
   // Process incoming note requests
   useEffect(() => {
@@ -671,15 +753,57 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
     };
   }, [id, handleNodeConnection]);
 
-  const Note = ({ note, onDelete }: { note: any; onDelete: (id: string) => void }) => (
+  // Add a debug component that shows connected nodes
+  const ConnectedNodesDisplay = () => {
+    const nodesList = Array.from(connectedNodes);
+    
+    if (nodesList.length === 0) return null;
+    
+    return (
+      <Box sx={{ 
+        p: 0.75, 
+        borderBottom: '1px solid rgba(0,0,0,0.08)', 
+        bgcolor: 'background.paper'
+      }}>
+        <Typography variant="caption" sx={{ color: 'text.secondary', fontSize: '0.7rem' }}>
+          {nodesList.length} connection{nodesList.length !== 1 ? 's' : ''}
+        </Typography>
+        {lastAddedNote && (
+          <Box sx={{ 
+            mt: 0.5, 
+            p: 0.5, 
+            bgcolor: 'background.paper', 
+            color: 'text.secondary',
+            borderRadius: 0.5,
+            fontSize: '0.7rem',
+            border: '1px solid rgba(0,0,0,0.05)'
+          }}>
+            <Typography variant="caption" sx={{ fontWeight: 'normal', fontSize: '0.7rem' }}>
+              Note added
+            </Typography>
+          </Box>
+        )}
+      </Box>
+    );
+  };
+
+  const Note = ({ note, onDelete }) => (
     <Box
       sx={{
-        p: 1,
-        mb: 1,
+        p: 1.5,
+        mb: 1.5,
         bgcolor: 'background.paper',
         borderRadius: 1,
         position: 'relative',
-        borderLeft: note.source === 'auto' ? '3px solid #2196f3' : '3px solid #4caf50',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+        border: '1px solid',
+        borderColor: note.inContext ? 'primary.main' : 'rgba(0,0,0,0.05)',
+        ...(note.inContext && {
+          bgcolor: 'primary.lightest',
+        }),
+        '&:hover': {
+          boxShadow: '0 2px 4px rgba(0,0,0,0.12)',
+        },
       }}
     >
       {/* Note Header with metadata */}
@@ -687,21 +811,34 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         display: 'flex', 
         justifyContent: 'space-between', 
         alignItems: 'center',
-        mb: 0.5, 
-        borderBottom: '1px solid rgba(0,0,0,0.1)',
-        pb: 0.5
+        mb: 0.75, 
+        borderBottom: '1px solid rgba(0,0,0,0.05)',
+        pb: 0.75
       }}>
         <Typography
           variant="caption"
           sx={{
-            fontWeight: 'bold',
-            color: note.source === 'auto' ? '#2196f3' : '#4caf50',
+            color: 'text.secondary',
+            fontSize: '0.7rem'
           }}
         >
-          {note.author || 'User'} • {note.source === 'auto' ? 'Auto-saved' : 'Manual note'}
+          {note.author || 'User'} • {note.source === 'auto' ? 'Auto' : 'Manual'}
+          {note.inContext && (
+            <Typography 
+              component="span" 
+              sx={{ 
+                ml: 1, 
+                color: 'primary.main',
+                fontSize: '0.7rem',
+                fontWeight: 'medium'
+              }}
+            >
+              • In AI Context
+            </Typography>
+          )}
         </Typography>
         
-        <Typography variant="caption" color="text.secondary">
+        <Typography variant="caption" sx={{ color: 'text.disabled', fontSize: '0.7rem' }}>
           {new Date(note.timestamp).toLocaleString()}
         </Typography>
       </Box>
@@ -712,74 +849,77 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         sx={{
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
-          pt: 0.5
+          pt: 0.5,
+          color: 'text.primary',
+          lineHeight: 1.4
         }}
       >
         {note.content}
       </Typography>
       
-      {/* Delete Button */}
+      {/* Action Buttons */}
       <Box
         sx={{
           position: 'absolute',
           top: 4,
           right: 4,
+          opacity: 0,
+          transition: 'opacity 0.2s',
+          display: 'flex',
+          gap: '2px',
+          '&:hover': {
+            opacity: 1,
+          },
+          '.MuiBox-root:hover &': {
+            opacity: 0.7,
+          }
         }}
       >
+        {/* Toggle AI Context Button */}
+        <Tooltip title={note.inContext ? "Remove from AI context" : "Add to AI context"}>
+          <IconButton
+            size="small"
+            onClick={() => handleToggleContext(note.id, note.content)}
+            disabled={connectedNodes.size === 0}
+            sx={{ 
+              padding: '2px',
+              color: note.inContext 
+                ? 'primary.main' 
+                : connectedNodes.size > 0 ? 'text.secondary' : 'text.disabled',
+              '&:hover': {
+                color: note.inContext ? 'primary.dark' : 'primary.main',
+                bgcolor: 'primary.lightest'
+              }
+            }}
+          >
+            <SendIcon 
+              fontSize="small" 
+              sx={{
+                transform: note.inContext ? 'rotate(-90deg)' : 'none',
+                transition: 'transform 0.2s ease-in-out'
+              }}
+            />
+          </IconButton>
+        </Tooltip>
+        
+        {/* Delete Button */}
         <IconButton
           size="small"
           onClick={() => onDelete(note.id)}
+          sx={{ 
+            padding: '2px',
+            color: 'text.disabled',
+            '&:hover': {
+              color: 'error.main',
+              bgcolor: 'error.lightest'
+            }
+          }}
         >
           <DeleteIcon fontSize="small" />
         </IconButton>
       </Box>
     </Box>
   );
-
-  // Add a debug component that shows connected nodes
-  const ConnectedNodesDisplay = () => {
-    const nodesList = Array.from(connectedNodes);
-    
-    return (
-      <Box sx={{ p: 1, borderBottom: 1, borderColor: 'divider', bgcolor: 'primary.light' }}>
-        <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-          Connected Nodes: {nodesList.length}
-        </Typography>
-        {nodesList.map(nodeId => (
-          <Typography key={nodeId} variant="caption" component="div">
-            • {nodeId}
-          </Typography>
-        ))}
-        {lastAddedNote && (
-          <Box sx={{ 
-            mt: 1, 
-            p: 1, 
-            bgcolor: 'success.light', 
-            color: 'success.contrastText',
-            borderRadius: 1,
-            animation: 'fadeIn 0.3s ease-in'
-          }}>
-            <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-              ✅ Note added: {lastAddedNote}
-            </Typography>
-          </Box>
-        )}
-        {lastMessage && (
-          <Box sx={{ 
-            mt: 1, 
-            p: 1, 
-            bgcolor: 'info.light', 
-            color: 'info.contrastText',
-            borderRadius: 1
-          }}>
-            <Typography variant="caption" sx={{ fontWeight: 'bold' }}>
-              📩 {lastMessage}
-            </Typography>
-          </Box>
-        )}
-      </Box>
-    );
-  };
 
   return (
     <BaseNode id={id} data={data} selected={selected}>
@@ -799,22 +939,22 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
             justifyContent: 'space-between',
             alignItems: 'center',
             p: 1,
-            borderBottom: 1,
-            borderColor: 'divider',
-            bgcolor: connectedNodes.size > 0 ? 'primary.light' : 'background.paper',
-            color: connectedNodes.size > 0 ? 'primary.contrastText' : 'text.primary',
+            borderBottom: '1px solid rgba(0,0,0,0.08)',
+            bgcolor: 'background.paper',
+            color: 'text.primary',
           }}
         >
-          <Typography variant="subtitle2" fontWeight="bold">
+          <Typography variant="subtitle2" fontWeight="medium" color="text.primary">
             {connectedNodes.size > 0 
-              ? `📝 Connected to ${connectedNodes.size} node${connectedNodes.size !== 1 ? 's' : ''}`
-              : "Notes Node (Not Connected)"}
+              ? `Notes (${notes.length})`
+              : "Notes"}
           </Typography>
           <Box sx={{ display: 'flex', gap: 0.5 }}>
-            {/* Add a debug button to show node ID */}
+            {/* ID button - more subtle */}
             <Tooltip title={`Node ID: ${id}`}>
               <IconButton
                 size="small"
+                sx={{ color: 'text.disabled', padding: '2px' }}
                 onClick={() => console.log('Notes Node ID:', id)}
               >
                 <Typography variant="caption" sx={{ fontSize: '0.6rem' }}>ID</Typography>
@@ -826,10 +966,10 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
               onClick={handleDisconnectAll}
               title="Disconnect All Nodes"
               sx={{
-                color: 'error.main',
+                color: 'text.disabled',
+                padding: '2px',
                 '&:hover': {
-                  backgroundColor: 'error.main',
-                  color: 'error.contrastText',
+                  color: 'error.main',
                 },
               }}
             >
@@ -839,7 +979,6 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         </Box>
         </Box>
 
-        {/* Always show debug info */}
         <ConnectedNodesDisplay />
 
         {/* Notes List */}
@@ -849,9 +988,11 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
             overflow: 'auto',
             bgcolor: 'background.default',
             borderRadius: 0,
+            p: 1.5,
           }}
+          elevation={0}
         >
-          <Box sx={{ p: 1 }}>
+          <Box>
             {notes.length > 0 ? (
               notes.map((note) => (
                 <Note key={note.id} note={note} onDelete={handleDeleteNote} />
@@ -861,7 +1002,7 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
                 variant="body2"
                 color="text.secondary"
                 align="center"
-                sx={{ p: 2 }}
+                sx={{ p: 2, fontSize: '0.85rem' }}
               >
                 {connectedNodes.size > 0 
                   ? "No notes yet. Use the 'Take note' button in the connected chat node."
@@ -870,10 +1011,10 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
                 <Typography
                     variant="caption" 
                     display="block" 
-                    color="primary.main" 
-                    sx={{ mt: 1, fontWeight: 'bold' }}
+                    color="text.secondary" 
+                    sx={{ mt: 1, fontStyle: 'italic', fontSize: '0.75rem' }}
                   >
-                    Ready to receive notes from {connectedNodes.size} connected node(s).
+                    Ready to receive notes from connected node(s)
                   </Typography>
                 )}
                 </Typography>
@@ -883,7 +1024,7 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
 
         {/* Draft Mode */}
         {isDraftMode ? (
-          <Box sx={{ p: 1, borderTop: 1, borderColor: 'divider' }}>
+          <Box sx={{ p: 1, borderTop: '1px solid rgba(0,0,0,0.08)' }}>
             <TextField
               fullWidth
               multiline
@@ -892,12 +1033,15 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
               onChange={(e) => setDraftContent(e.target.value)}
               placeholder="Enter your draft note..."
               sx={{ mb: 1 }}
+              size="small"
+              variant="outlined"
             />
             <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
               <Button
                 size="small"
                 onClick={handleDiscardDraft}
                 color="inherit"
+                sx={{ textTransform: 'none' }}
               >
                 Discard
               </Button>
@@ -906,6 +1050,7 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
                 variant="contained"
                 onClick={handleSaveDraft}
                 disabled={!draftContent.trim()}
+                sx={{ textTransform: 'none' }}
               >
                 Save
               </Button>
@@ -917,8 +1062,7 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
               display: 'flex',
               p: 1,
               gap: 1,
-              borderTop: 1,
-              borderColor: 'divider',
+              borderTop: '1px solid rgba(0,0,0,0.08)',
               bgcolor: 'background.paper',
             }}
           >
@@ -930,7 +1074,9 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
               onKeyPress={handleKeyPress}
               placeholder="Type a note and press Enter..."
               multiline
-              maxRows={4}
+              maxRows={3}
+              variant="outlined"
+              sx={{ '& .MuiOutlinedInput-root': { borderRadius: 1 } }}
             />
             <Button
               variant="contained"
@@ -939,6 +1085,7 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
                 setInputContent('');
               }}
               disabled={!inputContent.trim()}
+              sx={{ textTransform: 'none' }}
             >
               Add
             </Button>

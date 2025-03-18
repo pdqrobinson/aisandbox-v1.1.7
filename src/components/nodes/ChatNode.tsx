@@ -226,6 +226,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
   const [hasNotesNode, setHasNotesNode] = useState(false);
   const [connectedNoteIds, setConnectedNoteIds] = useState<string[]>([]);
   const [takenNotes, setTakenNotes] = useState<ChatNodeData['sentNotes']>([]);
+  const [contextMessages, setContextMessages] = useState<ChatNodeData['messages']>([]);
 
   // Memoized values
   const hasConnectedNotesNode = useMemo(() => {
@@ -348,8 +349,13 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
       setMessages(newMessages); // Update messages immediately for better UX
       setInput(''); // Clear input right after sending
       
-      // Prepare system context
-      const systemContext = `${DEFAULT_ENVIRONMENT_PROMPT}\n\n${localSettings.systemPrompt}`;
+      // Prepare system context including the notes added to context
+      const systemContext = `${localSettings.environmentPrompt || DEFAULT_ENVIRONMENT_PROMPT}\n\n${localSettings.systemPrompt}`;
+      
+      // Prepare context for both providers
+      const systemWithNotes = contextMessages.length > 0 
+        ? `${systemContext}\n\n--- ADDED CONTEXT ---\n${contextMessages.map(msg => msg.content).join('\n\n')}\n--- END ADDED CONTEXT ---`
+        : systemContext;
       
       let response;
       if (localSettings.provider === 'cohere') {
@@ -365,11 +371,26 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
             model: localSettings.model,
             temperature: localSettings.temperature,
             max_tokens: localSettings.maxTokens,
-            system: systemContext,
+            system: systemWithNotes,
             preamble_override: DEFAULT_ENVIRONMENT_PROMPT // Ensure sandbox context
           })
         });
       } else if (localSettings.provider === 'deepseek') {
+        // For DeepSeek, we need to include the context messages as system messages
+        const systemMessages = [
+          { role: 'system', content: DEFAULT_ENVIRONMENT_PROMPT }, // Base environment
+          { role: 'system', content: localSettings.systemPrompt } // User system prompt
+        ];
+        
+        // Add context notes as system messages
+        const contextSystemMessages = contextMessages.map(msg => ({
+          role: 'system',
+          content: msg.content
+        }));
+        
+        // Combine all system messages
+        const allSystemMessages = [...systemMessages, ...contextSystemMessages];
+        
         response = await fetch('https://api.deepseek.com/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -379,8 +400,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
           body: JSON.stringify({
             model: localSettings.model,
             messages: [
-              { role: 'system', content: DEFAULT_ENVIRONMENT_PROMPT }, // Ensure sandbox context
-              { role: 'system', content: localSettings.systemPrompt },
+              ...allSystemMessages,
               ...newMessages
             ],
             temperature: localSettings.temperature,
@@ -403,16 +423,6 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         // Store the AI's response in the notes node
         const noteContent = `[Auto-Note ${new Date().toLocaleString()}]\n\nUser: ${input}\n\nAI Response: ${aiResponse}`;
         handleTakeNote(noteContent);
-        
-        // Set a simple confirmation message for the chat
-        aiResponse = "Note added";
-        
-        // Turn off auto note-taking after one use
-        setAutoTakeNotes(false);
-        updateNode(id, {
-          ...safeData,
-          autoTakeNotes: false
-        });
       }
 
       const assistantMessage = { role: 'assistant', content: aiResponse };
@@ -830,6 +840,105 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     }
   }, [safeData.autoTakeNotes]);
 
+  // Add a handler to receive notes from NotesNode as context
+  useEffect(() => {
+    console.log('ChatNode: Setting up handler for notes added as context');
+    
+    const handleNoteContext = (message) => {
+      console.log('ChatNode: Received note as context:', message);
+      
+      if (message.type !== 'context' || message.metadata?.type !== 'note_context') {
+        return;
+      }
+      
+      // Add the note content to the context messages
+      const noteContent = message.content;
+      if (!noteContent) {
+        console.warn('ChatNode: Received empty note content');
+        return;
+      }
+      
+      const noteId = message.metadata.noteId;
+      const action = message.metadata.action || 'add'; // Default to add if not specified
+      
+      if (action === 'add') {
+        // Add to context
+        // Add a special message to let the user know a note was added
+        const contextNotification = {
+          id: `ctx-${Date.now()}`,
+          role: 'system',
+          content: `--- Note added to conversation context ---\n${noteContent}\n---`,
+          timestamp: new Date().toISOString(),
+          isContextOnly: true,
+          noteId: noteId // Track which note this is from
+        };
+        
+        // Add it to messages so user sees it was added
+        setMessages(prev => [...prev, contextNotification]);
+        
+        // Also add it to context messages for AI
+        setContextMessages(prev => [...prev, {
+          role: 'system',
+          content: noteContent,
+          noteId: noteId // Store the note ID to be able to remove it later
+        }]);
+        
+        console.log('ChatNode: Added note to conversation context');
+        
+        // Show feedback
+        setValidationMessage({
+          type: 'success',
+          message: 'Note added to conversation context',
+          timeout: 3000
+        });
+      } else if (action === 'remove') {
+        // Remove from context
+        
+        // Filter out the notification message for this note
+        setMessages(prev => prev.filter(msg => 
+          !(msg.isContextOnly && msg.noteId === noteId)
+        ));
+        
+        // Filter out the context message for this note
+        setContextMessages(prev => prev.filter(msg => msg.noteId !== noteId));
+        
+        console.log('ChatNode: Removed note from conversation context');
+        
+        // Show feedback
+        setValidationMessage({
+          type: 'info',
+          message: 'Note removed from conversation context',
+          timeout: 3000
+        });
+        
+        // Add a removal notification
+        const removalNotification = {
+          id: `ctx-remove-${Date.now()}`,
+          role: 'system',
+          content: `--- Note removed from conversation context ---`,
+          timestamp: new Date().toISOString(),
+          isContextOnly: true,
+          temporary: true
+        };
+        
+        // Show temporary removal notification
+        setMessages(prev => [...prev, removalNotification]);
+        
+        // Remove the notification after a few seconds
+        setTimeout(() => {
+          setMessages(prev => prev.filter(msg => msg.id !== removalNotification.id));
+        }, 3000);
+      }
+    };
+    
+    // Subscribe to send_to_ai events
+    const unsubscribeSendToAI = messageBus.subscribe('send_to_ai', handleNoteContext);
+    
+    return () => {
+      unsubscribeSendToAI();
+    };
+  }, []);
+
   return (
     <ChatNodeErrorBoundary>
       <BaseNode id={id} data={safeData} selected={selected}>
@@ -937,60 +1046,89 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
             <Box sx={{ p: 1 }}>
               {messages.map((message, index) => (
                 <Paper
-                  key={index}
+                  key={message.id || index}
+                  elevation={0}
                   sx={{
-                    p: 1,
-                    mb: 1,
-                    bgcolor: message.role === 'user' ? 'primary.light' : 'background.paper',
-                    color: message.role === 'user' ? 'primary.contrastText' : 'text.primary',
+                    p: 2,
+                    mb: 2,
+                    bgcolor: message.role === 'user' ? 'grey.100' : 'white',
+                    border: '1px solid',
+                    borderColor: message.role === 'user' ? 'grey.300' : 'grey.200',
+                    borderRadius: 2,
                     position: 'relative',
-                    '&:hover .message-actions': {
-                      opacity: 1,
-                    },
+                    // Special styling for context notifications
+                    ...(message.isContextOnly && {
+                      bgcolor: 'info.lightest',
+                      borderColor: 'info.light',
+                      borderStyle: 'dashed',
+                      py: 1,
+                      px: 2,
+                      color: 'info.dark',
+                      fontSize: '0.9rem',
+                    }),
                   }}
                 >
                   <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                    <Typography
-                      variant="body2"
-                      sx={{
-                        whiteSpace: 'pre-wrap',
-                        wordBreak: 'break-word',
-                        pr: 4,
-                      }}
-                    >
-                      {message.content}
-                    </Typography>
-                    <Box 
-                      className="message-actions"
-                      sx={{ 
-                        opacity: { xs: 1, sm: 0.7 },  // Always visible on mobile, slightly visible on desktop
-                        transition: 'opacity 0.2s',
-                        ml: 1,
-                        display: 'flex',
-                        gap: 0.5
-                      }}
-                    >
-                      <Tooltip title="Copy to clipboard">
-                        <IconButton
-                          size="small"
-                          onClick={() => {
-                            navigator.clipboard.writeText(message.content);
+                    {!message.isContextOnly ? (
+                      // Regular message content
+                      <>
+                        <Typography
+                          variant="body2"
+                          sx={{
+                            whiteSpace: 'pre-wrap',
+                            wordBreak: 'break-word',
+                            pr: 4,
                           }}
                         >
-                          <ContentCopyIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      {(hasNotesNode || connectedNoteIds.length > 0) && (
-                        <Tooltip title="Take note">
-                          <IconButton
-                            size="small"
-                            onClick={() => handleTakeNote(message.content)}
-                          >
-                            <NoteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
-                    </Box>
+                          {message.content}
+                        </Typography>
+                        <Box 
+                          className="message-actions"
+                          sx={{ 
+                            opacity: { xs: 1, sm: 0.3 },  // Always visible on mobile, slightly visible on desktop
+                            transition: 'opacity 0.2s',
+                            ml: 1,
+                            display: 'flex',
+                            gap: 0.5
+                          }}
+                        >
+                          <Tooltip title="Copy to clipboard">
+                            <IconButton
+                              size="small"
+                              onClick={() => {
+                                navigator.clipboard.writeText(message.content);
+                              }}
+                            >
+                              <ContentCopyIcon fontSize="small" />
+                            </IconButton>
+                          </Tooltip>
+                          {(hasNotesNode || connectedNoteIds.length > 0) && (
+                            <Tooltip title="Take note">
+                              <IconButton
+                                size="small"
+                                onClick={() => handleTakeNote(message.content)}
+                              >
+                                <NoteIcon fontSize="small" />
+                              </IconButton>
+                            </Tooltip>
+                          )}
+                        </Box>
+                      </>
+                    ) : (
+                      // Context notification message (no actions)
+                      <Typography
+                        variant="body2"
+                        sx={{
+                          whiteSpace: 'pre-wrap',
+                          wordBreak: 'break-word',
+                          width: '100%',
+                          fontStyle: 'italic',
+                          fontSize: '0.85rem',
+                        }}
+                      >
+                        {message.content}
+                      </Typography>
+                    )}
                   </Box>
                 </Paper>
               ))}
