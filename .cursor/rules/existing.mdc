@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Your rule content
+Only use methods that exist in the service implementations if possible, this is to avoid breaking other components when making updates 
+- You can @ files here
+- You can use markdown but dont have to

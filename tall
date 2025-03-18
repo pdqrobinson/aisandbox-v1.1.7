@@ -1,0 +1,5 @@
+94730f6 Enhanced auto note-taking persistence and communication between ChatNode and NotesNode
+376a4fe Fix note-taking communication between ChatNode and NotesNode
+d4f2e21 Fix notes communication between ChatNode and NotesNode
+be89fcb Merge vercel-config: Add Vercel deployment configuration
+aae0805 Setup Vercel deployment configuration
