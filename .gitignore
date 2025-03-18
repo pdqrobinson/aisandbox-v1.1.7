@@ -1,5 +1,5 @@
 # Dependencies
-node_modules/
+/node_modules
 /.pnp
 .pnp.js
 
@@ -27,11 +27,6 @@ yarn-error.log*
 .vscode/
 *.swp
 *.swo
-.DS_Store
-*.pem
-
-# Vercel
-.vercel
 
 # Misc
 .DS_Store
@@ -40,6 +35,7 @@ yarn-error.log*
 .env.development.local
 .env.test.local
 .env.production.local
+.vercel
 
 # Logs
 npm-debug.log*

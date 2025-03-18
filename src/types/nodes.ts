@@ -52,6 +52,14 @@ export interface ChatNodeData extends BaseNodeData {
   settings?: ChatSettings;
   messages?: Message[];
   environmentPrompt?: string;
+  autoTakeNotes?: boolean;
+  sentNotes?: Array<{
+    id: string;
+    content: string;
+    timestamp: number;
+    source: 'manual' | 'auto';
+    author: string;
+  }>;
 }
 
 export interface NotesNodeData extends BaseNodeData {

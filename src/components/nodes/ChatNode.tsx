@@ -180,30 +180,34 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const contextUpdateTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  // Ensure data has default values
-  const safeData = useMemo(() => {
-    const defaultData = {
-      messages: [],
-      settings: {
-        provider: 'cohere' as Provider,
-        model: 'command',
-        temperature: 0.7,
-        maxTokens: 1000,
-        systemPrompt: "You are an AI assistant that helps users with their tasks.",
-        environmentPrompt: DEFAULT_ENVIRONMENT_PROMPT,
-        apiKey: ''
-      }
-    };
+  // Default data
+  const defaultData = useMemo<ChatNodeData>(() => ({
+    label: 'Chat',
+    messages: [],
+    autoTakeNotes: false,
+    sentNotes: [],
+    settings: {
+      provider: 'cohere',
+      model: 'command',
+      temperature: 0.7,
+      maxTokens: 1000,
+      apiKey: '',
+      systemPrompt: DEFAULT_ENVIRONMENT_PROMPT
+    }
+  }), []);
 
+  // Safe data access with defaults
+  const safeData = useMemo(() => {
     return {
-      ...defaultData,
       messages: data.messages || defaultData.messages,
+      autoTakeNotes: data.autoTakeNotes ?? defaultData.autoTakeNotes,
+      sentNotes: data.sentNotes || defaultData.sentNotes,
       settings: {
         ...defaultData.settings,
         ...data.settings
       }
     };
-  }, [data]);
+  }, [data, defaultData]);
 
   // State declarations
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -217,7 +221,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
   const [messages, setMessages] = useState(safeData.messages);
   const [connectedNodes, setConnectedNodes] = useState<Map<string, any>>(new Map());
   const [connectedNotes, setConnectedNotes] = useState<Set<string>>(new Set());
-  const [autoTakeNotes, setAutoTakeNotes] = useState(false);
+  const [autoTakeNotes, setAutoTakeNotes] = useState(safeData.autoTakeNotes || false);
   const [connectedToNotes, setConnectedToNotes] = useState(false);
   const [hasNotesNode, setHasNotesNode] = useState(false);
   const [connectedNoteIds, setConnectedNoteIds] = useState<string[]>([]);
@@ -882,6 +886,34 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     };
   }, [id, reactFlow]);
 
+  const toggleAutoTakeNotes = useCallback(() => {
+    const newAutoTakeNotes = !autoTakeNotes;
+    setAutoTakeNotes(newAutoTakeNotes);
+    
+    // Persist the auto-take-notes setting
+    updateNode(id, {
+      ...safeData,
+      autoTakeNotes: newAutoTakeNotes
+    });
+    
+    // Show feedback
+    setValidationMessage({
+      type: 'success',
+      message: `Auto note-taking ${newAutoTakeNotes ? 'enabled' : 'disabled'}`,
+      timeout: 3000
+    });
+    
+    console.log('Auto note-taking toggled:', newAutoTakeNotes);
+  }, [autoTakeNotes, id, safeData, updateNode]);
+
+  // Add effect to restore auto-take-notes state
+  useEffect(() => {
+    if (safeData.autoTakeNotes !== undefined && safeData.autoTakeNotes !== autoTakeNotes) {
+      console.log('Restoring auto-take-notes state:', safeData.autoTakeNotes);
+      setAutoTakeNotes(safeData.autoTakeNotes);
+    }
+  }, [safeData.autoTakeNotes]);
+
   return (
     <ChatNodeErrorBoundary>
       <BaseNode id={id} data={safeData} selected={selected}>
@@ -967,12 +999,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   <Tooltip title={autoTakeNotes ? "Disable Auto Note Taking" : "Enable Auto Note Taking"}>
                     <IconButton
                       size="small"
-                      onClick={() => {
-                        console.log('Toggle auto note taking. Current state:', autoTakeNotes);
-                        console.log('Has notes node:', hasNotesNode);
-                        console.log('Connected note IDs:', connectedNoteIds);
-                        setAutoTakeNotes(!autoTakeNotes);
-                      }}
+                      onClick={toggleAutoTakeNotes}
                       color={autoTakeNotes ? 'secondary' : 'primary'}
                     >
                       <AutoNoteIcon fontSize="small" />
