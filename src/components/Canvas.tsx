@@ -1,167 +1,182 @@
-import React, { useCallback, useMemo } from 'react';
+import React from 'react';
 import ReactFlow, {
   Background,
   Controls,
-  Connection,
-  Edge,
-  NodeTypes,
-  OnConnect,
-  OnNodesChange,
-  OnEdgesChange,
-  applyNodeChanges,
-  applyEdgeChanges,
   Node,
-  NodeChange,
+  Edge,
+  Connection,
+  useReactFlow,
+  ReactFlowProvider,
+  useNodesState,
+  useEdgesState,
 } from 'reactflow';
-import 'reactflow/dist/style.css';
-import { Box, Paper, Stack, Tooltip, Button } from '@mui/material';
-import {
-  NoteAdd as NotesIcon,
-  Chat as ChatIcon,
-  Image as ImageIcon,
-  Description as DocumentIcon,
-  Link as UrlIcon,
-  AutoFixHigh as ImageGenerationIcon,
-} from '@mui/icons-material';
+import { Box, Paper, Stack, Button, Tooltip } from '@mui/material';
+import { ChatBubble as ChatIcon, Notes as NotesIcon, Language as UrlIcon, Article as DocumentIcon } from '@mui/icons-material';
 import { useCanvasStore } from '../store/canvasStore';
-import { NodeType } from '../types/nodes';
 import { ChatNode } from './nodes/ChatNode';
 import { NotesNode } from './nodes/NotesNode';
-import { ImageNode } from './nodes/ImageNode';
-import { DocumentNode } from './nodes/DocumentNode';
 import { UrlNode } from './nodes/UrlNode';
-import { ImageGenerationNode } from './nodes/ImageGenerationNode';
+import { DocumentNode } from './nodes/DocumentNode';
+import { NodeData } from '../types/nodes';
+import 'reactflow/dist/style.css';
 
-// Define nodeTypes outside of the component
 const NODE_TYPES = {
-  chat: ChatNode,
-  notes: NotesNode,
-  image: ImageNode,
-  document: DocumentNode,
-  url: UrlNode,
-  imageGeneration: ImageGenerationNode,
-} as const;
+  chatNode: ChatNode,
+  notesNode: NotesNode,
+  urlNode: UrlNode,
+  documentNode: DocumentNode,
+};
 
-// Memoize actions
-const useActions = () => useMemo(() => [
-  { icon: <ChatIcon />, name: 'Chat Node', type: 'chat' as NodeType },
-  { icon: <NotesIcon />, name: 'Notes Node', type: 'notes' as NodeType },
-  { icon: <ImageIcon />, name: 'Image Node', type: 'image' as NodeType },
-  { icon: <DocumentIcon />, name: 'Document Node', type: 'document' as NodeType },
-  { icon: <UrlIcon />, name: 'URL Node', type: 'url' as NodeType },
-  { icon: <ImageGenerationIcon />, name: 'Image Generation', type: 'imageGeneration' as NodeType },
-], []);
+const ACTIONS = [
+  {
+    type: 'chatNode',
+    name: 'Add Chat Node',
+    icon: <ChatIcon />,
+  },
+  {
+    type: 'notesNode',
+    name: 'Add Notes Node',
+    icon: <NotesIcon />,
+  },
+  {
+    type: 'urlNode',
+    name: 'Add URL Node',
+    icon: <UrlIcon />,
+  },
+  {
+    type: 'documentNode',
+    name: 'Add Document Node',
+    icon: <DocumentIcon />,
+  },
+];
 
-export const Canvas: React.FC = () => {
-  const { nodes, edges, addNode, addEdge, updateNode } = useCanvasStore();
-  const actions = useActions();
+const initialNodes: Node[] = [];
+const initialEdges: Edge[] = [];
 
-  const onNodesChange = useCallback(
-    (changes: NodeChange[]) => {
-      const updatedNodes = applyNodeChanges(changes, nodes);
-      
-      // Update node positions in store
-      changes.forEach((change) => {
-        if (change.type === 'position' && change.position) {
-          const node = nodes.find((n) => n.id === change.id);
-          if (node) {
-            updateNode(change.id, {
-              ...node.data,
-              position: change.position,
-            });
-          }
+const CanvasContent = () => {
+  const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
+  const { project, getViewport } = useReactFlow();
+  const addNode = useCanvasStore((state) => state.addNode);
+  const onConnect = useCanvasStore((state) => state.onConnect);
+
+  const handleConnect = React.useCallback(
+    (params: Connection) => {
+      // Ensure we have both source and target
+      if (params.source && params.target) {
+        // Check if connection already exists
+        const connectionExists = edges.some(
+          edge => 
+            (edge.source === params.source && edge.target === params.target) ||
+            (edge.source === params.target && edge.target === params.source)
+        );
+
+        if (!connectionExists) {
+          const edge: Edge = {
+            id: `${params.source}-${params.target}`,
+            source: params.source,
+            target: params.target,
+            type: 'default',
+            animated: false,
+            style: { stroke: '#555' }
+          };
+          setEdges((eds) => [...eds, edge]);
+          onConnect(edge);
         }
-      });
-
-      useCanvasStore.setState({ nodes: updatedNodes });
+      }
     },
-    [nodes, updateNode]
+    [edges, setEdges, onConnect]
   );
 
-  const onEdgesChange = useCallback(
-    (changes) => {
-      const updatedEdges = applyEdgeChanges(changes, edges);
-      useCanvasStore.setState({ edges: updatedEdges });
-    },
-    [edges]
-  );
+  const handleAddNode = React.useCallback(
+    (type: string) => {
+      const viewport = getViewport();
+      const centerX = window.innerWidth / 2;
+      const centerY = window.innerHeight / 2;
 
-  const onConnect = useCallback(
-    (connection: Connection) => {
-      addEdge(connection);
-    },
-    [addEdge]
-  );
+      // Calculate position in flow coordinates
+      const position = {
+        x: (centerX - viewport.x) / viewport.zoom,
+        y: (centerY - viewport.y) / viewport.zoom,
+      };
 
-  const handleAddNode = useCallback((type: NodeType) => {
-    const position = {
-      x: window.innerWidth / 2 - 100,
-      y: window.innerHeight / 2 - 100,
-    };
-    addNode(type, position);
-  }, [addNode]);
+      // Snap to grid
+      const snappedPosition = {
+        x: Math.round(position.x / 15) * 15,
+        y: Math.round(position.y / 15) * 15,
+      };
+
+      const newNode: Node<NodeData> = {
+        id: `${type}-${Date.now()}`,
+        type,
+        position: snappedPosition,
+        data: {
+          label: `${type.charAt(0).toUpperCase() + type.slice(1, -4)} ${nodes.length + 1}`,
+          type,
+        },
+      };
+
+      setNodes((nds) => [...nds, newNode]);
+      addNode(newNode);
+    },
+    [nodes.length, addNode, getViewport, setNodes]
+  );
 
   return (
     <Box sx={{ width: '100%', height: '100%', position: 'relative' }}>
-      <Paper
-        elevation={0}
-        sx={{
-          width: '100%',
-          height: '100%',
-          bgcolor: 'background.default',
-        }}
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={handleConnect}
+        nodeTypes={NODE_TYPES}
+        fitView
+        snapToGrid
+        snapGrid={[15, 15]}
+        defaultViewport={{ x: 0, y: 0, zoom: 1 }}
+        minZoom={0.1}
+        maxZoom={4}
+        deleteKeyCode="Delete"
+        selectionKeyCode="Shift"
+        multiSelectionKeyCode="Control"
+        connectionMode="loose"
       >
-        <ReactFlow
-          nodes={nodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          nodeTypes={NODE_TYPES}
-          fitView
-          attributionPosition="bottom-right"
-          snapToGrid={true}
-          snapGrid={[15, 15]}
-          defaultViewport={{ x: 0, y: 0, zoom: 1 }}
-          minZoom={0.1}
-          maxZoom={4}
-          deleteKeyCode={['Backspace', 'Delete']}
-          multiSelectionKeyCode={['Control', 'Meta']}
-          selectionKeyCode={['Shift']}
+        <Background />
+        <Controls />
+        <Paper
+          elevation={3}
+          sx={{
+            position: 'absolute',
+            top: 20,
+            left: 20,
+            zIndex: 10,
+            borderRadius: 2,
+            bgcolor: 'background.paper',
+          }}
         >
-          <Background />
-          <Controls />
-        </ReactFlow>
-      </Paper>
-
-      <Stack
-        direction="column"
-        spacing={1}
-        sx={{
-          position: 'absolute',
-          top: 16,
-          right: 16,
-          zIndex: 1000,
-        }}
-      >
-        {actions.map((action) => (
-          <Tooltip key={action.type} title={action.name} placement="left">
-            <Button
-              variant="contained"
-              color="primary"
-              onClick={() => handleAddNode(action.type)}
-              startIcon={action.icon}
-              sx={{
-                minWidth: '160px',
-                justifyContent: 'flex-start',
-                textAlign: 'left',
-              }}
-            >
-              {action.name}
-            </Button>
-          </Tooltip>
-        ))}
-      </Stack>
+          <Stack direction="row" spacing={1} p={1}>
+            {ACTIONS.map((action) => (
+              <Tooltip key={action.type} title={action.name}>
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => handleAddNode(action.type)}
+                  startIcon={action.icon}
+                >
+                  {action.name}
+                </Button>
+              </Tooltip>
+            ))}
+          </Stack>
+        </Paper>
+      </ReactFlow>
     </Box>
   );
-}; 
+};
+
+export const Canvas = () => (
+  <ReactFlowProvider>
+    <CanvasContent />
+  </ReactFlowProvider>
+); 

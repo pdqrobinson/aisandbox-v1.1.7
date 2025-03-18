@@ -88,34 +88,55 @@ export const BaseNode: React.FC<NodeProps<NodeData>> = ({
 
   return (
     <div style={{ position: 'relative' }}>
-      <Handle type="target" position={Position.Top} />
+      <Handle 
+        type="target" 
+        position={Position.Top}
+        style={{ 
+          background: '#555',
+          width: 8,
+          height: 8,
+          zIndex: 1000,
+          border: '2px solid #fff',
+          top: -4,
+          opacity: selected ? 1 : 0.5,
+          transition: 'opacity 0.2s'
+        }}
+        isConnectable={true}
+      />
       <ResizableBox
         width={dimensions.width}
         height={dimensions.height}
         onResize={(e, { size }) => {
-          e.stopPropagation();
+          // Only stop propagation if the resize handle was clicked
+          if ((e.target as HTMLElement).classList.contains('react-resizable-handle')) {
+            e.stopPropagation();
+          }
+          // Snap to grid (15px)
+          const snappedWidth = Math.round(size.width / 15) * 15;
+          const snappedHeight = Math.round(size.height / 15) * 15;
           setDimensions({
-            width: Math.max(200, Math.min(800, size.width)),
-            height: Math.max(200, Math.min(800, size.height))
+            width: Math.max(200, Math.min(800, snappedWidth)),
+            height: Math.max(200, Math.min(800, snappedHeight))
           });
         }}
         minConstraints={[200, 200]}
         maxConstraints={[800, 800]}
         resizeHandles={['se']}
-        draggableOpts={{ grid: [1, 1] }}
+        draggableOpts={{ grid: [15, 15] }}
         handle={
           <div
-            className="nodrag react-resizable-handle react-resizable-handle-se"
+            className="react-resizable-handle react-resizable-handle-se nodrag"
             style={{
               width: 20,
               height: 20,
-              bottom: 0,
-              right: 0,
+              bottom: -3,
+              right: -3,
               cursor: 'se-resize',
               position: 'absolute',
               backgroundColor: selected ? 'rgba(144, 202, 249, 0.2)' : 'transparent',
               borderRadius: '0 0 4px 0',
-              zIndex: 2
+              zIndex: 2,
+              transition: 'background-color 0.2s'
             }}
           />
         }
@@ -124,123 +145,103 @@ export const BaseNode: React.FC<NodeProps<NodeData>> = ({
           sx={{
             width: '100%',
             height: '100%',
-            border: selected ? '2px solid #90caf9' : 'none',
-            position: 'relative',
+            bgcolor: 'background.paper',
+            borderRadius: 1,
+            border: selected ? 2 : 1,
+            borderColor: selected ? 'primary.main' : 'divider',
             display: 'flex',
             flexDirection: 'column',
-            pr: 2,
-            pl: 2,
-            pb: 2,
-            '& > *': {
-              width: '100%',
-              minHeight: 0
-            }
+            overflow: 'hidden',
+            '& > *': { width: '100%', minHeight: 0 },
+            position: 'relative',
           }}
         >
           <CardHeader
+            sx={{
+              p: 1,
+              bgcolor: 'background.paper',
+              borderBottom: 1,
+              borderColor: 'divider',
+              flexShrink: 0,
+            }}
             action={
-              <IconButton
-                size="small"
-                onClick={handleMenuOpen}
-                sx={{ marginRight: -1 }}
-              >
-                <MoreVertIcon />
-              </IconButton>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                <ConnectionStatus connectedNodes={connectedNodes} />
+                <IconButton
+                  size="small"
+                  onClick={handleMenuOpen}
+                  sx={{ ml: 0.5 }}
+                >
+                  <MoreVertIcon fontSize="small" />
+                </IconButton>
+              </Box>
             }
             title={
               isEditingLabel ? (
                 <TextField
-                  fullWidth
                   size="small"
                   value={tempLabel}
                   onChange={(e) => setTempLabel(e.target.value)}
                   onBlur={handleLabelSubmit}
                   onKeyDown={handleLabelKeyPress}
-                  placeholder={`${data.type || 'Node'} ${id.slice(0, 4)}`}
                   autoFocus
+                  fullWidth
                   onClick={(e) => e.stopPropagation()}
-                  sx={{
-                    '& .MuiInputBase-input': {
-                      fontSize: '1rem',
-                      padding: '2px 4px',
-                    }
-                  }}
+                  sx={{ mt: -0.5, mb: -0.5 }}
                 />
-              ) :
-                <Box>
-                  <Typography
-                    variant="h6"
-                    component="div"
-                    onClick={handleLabelClick}
-                    sx={{
-                      cursor: 'pointer',
-                      '&:hover': {
-                        bgcolor: 'action.hover',
-                        borderRadius: 0.5,
-                      },
-                      whiteSpace: 'nowrap',
-                      overflow: 'hidden',
-                      textOverflow: 'ellipsis',
-                      padding: '2px 4px',
-                    }}
-                  >
-                    {data.label || `${data.type || 'Node'} ${id.slice(0, 4)}`}
-                  </Typography>
-                  <Typography
-                    variant="caption"
-                    sx={{
-                      display: 'block',
-                      color: 'text.secondary',
-                      pl: '4px',
-                      fontSize: '0.7rem',
-                    }}
-                  >
-                    ID: {id}
-                  </Typography>
-                </Box>
+              ) : (
+                <Typography
+                  variant="body1"
+                  onClick={handleLabelClick}
+                  sx={{
+                    cursor: 'pointer',
+                    '&:hover': { bgcolor: 'action.hover' },
+                    p: 0.5,
+                    borderRadius: 0.5,
+                  }}
+                >
+                  {data.label || `${data.type || 'Node'} ${id.slice(0, 4)}`}
+                </Typography>
+              )
             }
-            sx={{
-              '& .MuiCardHeader-content': { overflow: 'hidden' },
-              pb: 0,
-              flexShrink: 0
-            }}
           />
-          <CardContent sx={{ 
-            flex: 1,
-            overflow: 'hidden',
-            display: 'flex',
-            flexDirection: 'column',
-            p: 0,
-            '&:last-child': {
-              pb: 0
-            },
-            minHeight: 0,
-            '& > *': {
-              width: '100%',
-              height: '100%',
-              minHeight: 0
-            }
-          }}>
+          <CardContent
+            sx={{
+              p: 0,
+              flex: 1,
+              overflow: 'hidden',
+              '& > *': {
+                width: '100%',
+                height: '100%',
+                minHeight: 0,
+              },
+            }}
+          >
             {children}
           </CardContent>
         </Card>
       </ResizableBox>
-      <Handle type="source" position={Position.Bottom} />
-
-      <ConnectionStatus connectedNodes={connectedNodes} />
-
+      <Handle 
+        type="source" 
+        position={Position.Bottom}
+        style={{ 
+          background: '#555',
+          width: 8,
+          height: 8,
+          zIndex: 1000,
+          border: '2px solid #fff',
+          bottom: -4,
+          opacity: selected ? 1 : 0.5,
+          transition: 'opacity 0.2s'
+        }}
+        isConnectable={true}
+      />
       <Menu
         anchorEl={anchorEl}
         open={Boolean(anchorEl)}
         onClose={handleMenuClose}
         onClick={(e) => e.stopPropagation()}
       >
-        <MenuItem onClick={() => {
-          handleMenuClose();
-          setIsEditingLabel(true);
-        }}>
-          Rename
-        </MenuItem>
         <MenuItem onClick={handleDelete}>Delete</MenuItem>
       </Menu>
     </div>

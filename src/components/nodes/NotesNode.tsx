@@ -8,7 +8,7 @@ import {
   Button,
   IconButton,
 } from '@mui/material';
-import { LinkOff as LinkOffIcon } from '@mui/icons-material';
+import { LinkOff as LinkOffIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { BaseNode } from './BaseNode';
 import { NotesNodeData } from '../../types/nodes';
 import { useCanvasStore } from '../../store/canvasStore';
@@ -275,11 +275,12 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         sx={{
           display: 'flex',
           flexDirection: 'column',
-          height: '300px',
-          width: '300px',
+          height: '100%',
+          width: '100%',
           overflow: 'hidden',
         }}
       >
+        {/* Header */}
         <Box
           sx={{
             display: 'flex',
@@ -288,10 +289,11 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
             p: 1,
             borderBottom: 1,
             borderColor: 'divider',
+            bgcolor: 'background.paper',
           }}
         >
-          <Typography variant="subtitle2" color="text.secondary">
-            Notes {connectedNodes.size > 0 ? `(${connectedNodes.size} connected)` : ''}
+          <Typography variant="subtitle2">
+            {connectedNodes.size} connected node{connectedNodes.size !== 1 ? 's' : ''}
           </Typography>
           {connectedNodes.size > 0 && (
             <IconButton
@@ -311,64 +313,26 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
           )}
         </Box>
 
-        {isDraftMode ? (
-          <>
-            <Paper elevation={3} sx={{ p: 1, mb: 1, bgcolor: 'warning.light' }}>
-              <Typography variant="body2" sx={{ color: 'warning.dark', mb: 1 }}>
-                New note draft received
-              </Typography>
-              <TextField
-                fullWidth
-                multiline
-                minRows={4}
-                maxRows={8}
-                value={draftContent}
-                onChange={(e) => setDraftContent(e.target.value)}
-                variant="outlined"
-                size="small"
-              />
-              <Box sx={{ display: 'flex', gap: 1, mt: 1 }}>
-                <Button
-                  variant="contained"
-                  size="small"
-                  onClick={handleSaveDraft}
-                >
-                  Save Draft
-                </Button>
-                <Button
-                  variant="outlined"
-                  size="small"
-                  onClick={handleDiscardDraft}
-                >
-                  Discard
-                </Button>
-              </Box>
-            </Paper>
-          </>
-        ) : null}
-
+        {/* Notes List */}
         <Paper
           sx={{
             flex: 1,
             overflow: 'auto',
             bgcolor: 'background.default',
             borderRadius: 0,
-            display: 'flex',
-            flexDirection: 'column',
           }}
         >
-          <Box sx={{ flex: 1, overflow: 'auto', p: 1 }}>
+          <Box sx={{ p: 1 }}>
             {notes.map((note) => (
               <Paper
                 key={note.id}
                 sx={{
                   p: 1,
                   mb: 1,
-                  bgcolor: 'background.paper',
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'flex-start',
-                  gap: 1,
+                  position: 'relative',
+                  '&:hover .delete-button': {
+                    opacity: 1,
+                  },
                 }}
               >
                 <Typography
@@ -376,36 +340,99 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
                   sx={{
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
-                    flex: 1,
+                    pr: 4, // Make room for delete button
                   }}
                 >
                   {note.content}
                 </Typography>
-                <Button
+                <IconButton
+                  className="delete-button"
                   size="small"
-                  color="error"
                   onClick={() => handleDeleteNote(note.id)}
-                  sx={{ minWidth: 'auto', p: 0.5 }}
+                  sx={{
+                    position: 'absolute',
+                    right: 4,
+                    top: 4,
+                    opacity: 0,
+                    transition: 'opacity 0.2s',
+                    color: 'error.main',
+                    '&:hover': {
+                      backgroundColor: 'error.main',
+                      color: 'error.contrastText',
+                    },
+                  }}
+                  title="Delete note"
                 >
-                  ×
-                </Button>
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
               </Paper>
             ))}
           </Box>
-          
+        </Paper>
+
+        {/* Draft Mode */}
+        {isDraftMode ? (
           <Box sx={{ p: 1, borderTop: 1, borderColor: 'divider' }}>
             <TextField
               fullWidth
+              multiline
+              rows={4}
+              value={draftContent}
+              onChange={(e) => setDraftContent(e.target.value)}
+              placeholder="Enter your draft note..."
+              sx={{ mb: 1 }}
+            />
+            <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+              <Button
+                size="small"
+                onClick={handleDiscardDraft}
+                color="inherit"
+              >
+                Discard
+              </Button>
+              <Button
+                size="small"
+                variant="contained"
+                onClick={handleSaveDraft}
+                disabled={!draftContent.trim()}
+              >
+                Save
+              </Button>
+            </Box>
+          </Box>
+        ) : (
+          <Box
+            sx={{
+              display: 'flex',
+              p: 1,
+              gap: 1,
+              borderTop: 1,
+              borderColor: 'divider',
+              bgcolor: 'background.paper',
+            }}
+          >
+            <TextField
+              fullWidth
               size="small"
-              placeholder="Type a note and press Enter..."
               value={inputContent}
               onChange={(e) => setInputContent(e.target.value)}
               onKeyPress={handleKeyPress}
+              placeholder="Type a note and press Enter..."
               multiline
               maxRows={4}
             />
+            <Button
+              variant="contained"
+              onClick={() => {
+                handleSubmitNote(inputContent);
+                setInputContent('');
+              }}
+              disabled={!inputContent.trim()}
+            >
+              Add
+            </Button>
           </Box>
-        </Paper>
+        )}
       </Box>
     </BaseNode>
   );

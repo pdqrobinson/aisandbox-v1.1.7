@@ -46,12 +46,12 @@ export interface ChatSettings {
   maxTokens: number;
   apiKey: string;
   systemPrompt?: string;
-  environmentPrompt?: string;
 }
 
 export interface ChatNodeData extends BaseNodeData {
   settings?: ChatSettings;
   messages?: Message[];
+  environmentPrompt?: string;
 }
 
 export interface NotesNodeData extends BaseNodeData {
