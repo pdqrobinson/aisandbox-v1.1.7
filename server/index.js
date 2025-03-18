@@ -5,7 +5,7 @@ const path = require('path');
 const { createProxyMiddleware } = require('http-proxy-middleware');
 
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3000;
 
 // Middleware
 app.use(cors());
@@ -52,6 +52,11 @@ if (process.env.NODE_ENV === 'production') {
 // API Routes
 app.get('/api/health', (req, res) => {
   res.json({ status: 'healthy' });
+});
+
+// Add a route for the root URL
+app.get('/', (req, res) => {
+  res.send('Welcome to the server!');
 });
 
 // Catch-all route for client-side routing in production

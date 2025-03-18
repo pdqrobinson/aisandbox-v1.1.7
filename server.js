@@ -6,7 +6,7 @@ const dotenv = require('dotenv');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3002;
+const PORT = process.env.PORT || 3000;
 
 // Enable CORS for all routes
 app.use(cors());
@@ -118,4 +118,9 @@ const startServer = (port) => {
 };
 
 // Start the server
-startServer(PORT); 
+startServer(PORT);
+
+// Remove the root URL route
+// app.get('/', (req, res) => {
+//   res.send('Welcome to the server!');
+// }); 

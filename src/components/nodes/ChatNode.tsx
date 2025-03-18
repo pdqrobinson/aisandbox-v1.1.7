@@ -586,7 +586,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     }
   }, [localSettings.provider]);
 
-  // Update model when provider changes
+  // Check if current model is available for selected provider
   useEffect(() => {
     const availableModels = getAvailableModels();
     if (!availableModels.includes(localSettings.model)) {
@@ -595,7 +595,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         model: availableModels[0]
       }));
     }
-  }, [localSettings.provider, getAvailableModels]);
+  }, [localSettings.provider, localSettings.model, getAvailableModels]);
 
   // Update local settings when data changes
   useEffect(() => {
@@ -603,6 +603,19 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
       setLocalSettings(safeData.settings);
       setLocalApiKey(safeData.settings.apiKey || '');
     }
+  }, [safeData.settings]);
+
+  // Effect to sync localApiKey with settings
+  useEffect(() => {
+    if (safeData.settings.apiKey) {
+      setLocalApiKey(safeData.settings.apiKey);
+      setValidationMessage(null);
+    }
+  }, [safeData.settings.apiKey]);
+
+  // Effect to sync localSettings with safeData
+  useEffect(() => {
+    setLocalSettings(safeData.settings);
   }, [safeData.settings]);
 
   const scrollToBottom = useCallback(() => {
@@ -851,6 +864,10 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         });
 
         isValid = response.ok;
+        if (!response.ok) {
+          const errorData = await response.json();
+          throw new Error(errorData.message || 'Invalid API key');
+        }
       } else if (localSettings.provider === 'deepseek') {
         // Validate GitHub token
         const response = await fetch('https://api.github.com/user', {
@@ -863,7 +880,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
         isValid = response.ok;
         if (!response.ok) {
           const errorData = await response.json();
-          throw new Error(errorData.message || 'Invalid GitHub token. Please check your credentials.');
+          throw new Error(errorData.message || 'Invalid GitHub token');
         }
       }
 
@@ -879,26 +896,26 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
           settings: newSettings
         });
 
-        // Update local state
-        setLocalSettings(newSettings);
         setValidationMessage({
           type: 'success',
           message: 'Settings saved successfully'
         });
         
-        // Close dialog
-        setSettingsOpen(false);
+        // Close dialog after a short delay to show success message
+        setTimeout(() => {
+          setSettingsOpen(false);
+        }, 1000);
       }
     } catch (error) {
-      console.error('Error saving settings:', error);
+      console.error('Settings save error:', error);
       setValidationMessage({
         type: 'error',
-        message: error instanceof Error ? error.message : 'Failed to validate API key'
+        message: error instanceof Error ? error.message : 'Failed to save settings'
       });
     } finally {
       setIsValidatingKey(false);
     }
-  }, [id, safeData, localSettings, localApiKey, updateNode]);
+  }, [id, localSettings, localApiKey, safeData, updateNode]);
 
   // Update createAndSendNote function
   const createAndSendNote = async (content: string, isQuestion: boolean, connectedNotesNodes: string[]) => {
@@ -1600,9 +1617,13 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   value={localApiKey}
                   onChange={(e) => {
                     const newValue = e.target.value;
-                    console.log('Setting new API key length:', newValue.length);
                     setLocalApiKey(newValue);
                     setValidationMessage(null);
+                    // Also update local settings to keep state in sync
+                    setLocalSettings(prev => ({
+                      ...prev,
+                      apiKey: newValue
+                    }));
                   }}
                   placeholder={`Enter your ${localSettings.provider === 'cohere' ? 'Cohere' : 'GitHub'} API key`}
                   error={validationMessage?.type === 'error'}
