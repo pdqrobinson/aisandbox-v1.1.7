@@ -22,6 +22,7 @@ import {
   InputAdornment,
   ListSubheader,
   Tooltip,
+  Chip,
 } from '@mui/material';
 import {
   Send as SendIcon,
@@ -35,6 +36,7 @@ import {
   Hub as HubIcon,
   RestartAlt as RestartIcon,
   NoteAdd as NoteIcon,
+  AutoAwesome as AutoNoteIcon,
 } from '@mui/icons-material';
 import { BaseNode } from './BaseNode';
 import { ChatNodeData } from '../../types/nodes';
@@ -209,11 +211,17 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
   const [localSettings, setLocalSettings] = useState(safeData.settings);
   const [localApiKey, setLocalApiKey] = useState(safeData.settings.apiKey || '');
   const [isValidatingKey, setIsValidatingKey] = useState(false);
-  const [validationMessage, setValidationMessage] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [validationMessage, setValidationMessage] = useState<{ type: 'success' | 'error' | 'warning'; message: string } | null>(null);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [messages, setMessages] = useState(safeData.messages);
   const [connectedNodes, setConnectedNodes] = useState<Map<string, any>>(new Map());
+  const [connectedNotes, setConnectedNotes] = useState<Set<string>>(new Set());
+  const [autoTakeNotes, setAutoTakeNotes] = useState(false);
+  const [connectedToNotes, setConnectedToNotes] = useState(false);
+  const [hasNotesNode, setHasNotesNode] = useState(false);
+  const [connectedNoteIds, setConnectedNoteIds] = useState<string[]>([]);
+  const [takenNotes, setTakenNotes] = useState<ChatNodeData['sentNotes']>([]);
 
   // Memoized values
   const hasConnectedNotesNode = useMemo(() => {
@@ -382,9 +390,18 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
       }
 
       const result = await response.json();
-      const assistantMessage = localSettings.provider === 'cohere' 
+      let assistantMessage = localSettings.provider === 'cohere' 
         ? { role: 'assistant', content: result.text }
         : result.choices[0].message;
+      
+      // If auto-note taking is enabled, modify the response
+      if (autoTakeNotes && connectedNoteIds.length > 0) {
+        // Add a note about auto-note taking being enabled to the response
+        assistantMessage = {
+          ...assistantMessage,
+          content: assistantMessage.content + "\n\n[Auto-note: This response will be saved to the connected notes node.]"
+        };
+      }
 
       const updatedMessages = [...newMessages, assistantMessage];
       setMessages(updatedMessages);
@@ -512,31 +529,227 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     setConnectedNodes(new Map());
   }, [connectedNodes, id]);
 
-  const handleTakeNote = useCallback((content: string) => {
-    const connectedNoteNodes = Array.from(connectedNodes.entries())
-      .filter(([_, nodeData]) => 
-        nodeData.type === 'notesNode' || 
-        (nodeData.capabilities && nodeData.capabilities.some(cap => cap.type === 'notesNode'))
-      );
+  const handleTakeNote = (noteContent: string) => {
+    console.log('Taking note from message:', noteContent);
+    console.log('Connected note IDs:', connectedNoteIds);
+    console.log('Has notes node flag:', hasNotesNode);
     
-    if (connectedNoteNodes.length > 0) {
-      connectedNoteNodes.forEach(([nodeId]) => {
-        nodeCommunicationService.sendEvent(id, nodeId, 'request', {
+    // Format note with proper structure that NotesNode expects
+    const noteId = crypto.randomUUID();
+    const formattedNote = {
+      id: noteId,
+      content: noteContent,
+      timestamp: Date.now(),
+      source: 'manual',
+      author: 'User'
+    };
+    
+    // Store this locally (for potential recovery and tracking)
+    setTakenNotes(prev => [...prev, formattedNote]);
+    
+    // Check if we have connected notes nodes
+    if (connectedNoteIds.length === 0 && !hasNotesNode) {
+      console.warn('No notes nodes connected! Cannot send note.');
+      setValidationMessage({
+        type: 'warning',
+        message: 'No notes nodes connected! Create a Notes node and connect it first.',
+        timeout: 5000
+      });
+      return;
+    }
+    
+    // Log what we're about to do
+    console.log('Sending note to connected notes nodes:', connectedNoteIds);
+    
+    // Try all possible communication channels for maximum reliability
+    
+    // 1. Primary method: messageBus
+    try {
+      // Format 1: Direct request with all metadata
+      messageBus.emit('request', {
+        type: 'request',
+        senderId: id,
+        receiverId: connectedNoteIds.length > 0 ? connectedNoteIds[0] : null,
+        content: noteContent,
+        metadata: {
           type: 'addNote',
-          content: content,
-          timestamp: new Date().toISOString(),
-          source: 'chat'
-        });
+          noteId: noteId,
+          timestamp: formattedNote.timestamp,
+          source: formattedNote.source,
+          author: formattedNote.author
+        }
       });
       
-      // Show feedback that note was taken
-      setValidationMessage({
-        type: 'success',
-        message: 'Note added successfully'
+      // Format 2: Action-based format (for compatibility)
+      messageBus.emit('request', {
+        action: 'addNote',
+        senderId: id,
+        targetId: connectedNoteIds.length > 0 ? connectedNoteIds[0] : null,
+        content: noteContent,
+        metadata: {
+          noteId: noteId,
+          timestamp: formattedNote.timestamp,
+          source: formattedNote.source,
+          author: formattedNote.author
+        }
       });
-      setTimeout(() => setValidationMessage(null), 2000);
+      
+      console.log('Sent note request via messageBus');
+    } catch (error) {
+      console.error('Error sending note via messageBus:', error);
     }
-  }, [connectedNodes, id, nodeCommunicationService]);
+    
+    // 2. Backup method: nodeMessageService
+    if (nodeMessageService) {
+      try {
+        connectedNoteIds.forEach(noteNodeId => {
+          nodeMessageService.sendNoteRequest(id, noteNodeId, noteContent, {
+            noteId: noteId,
+            source: formattedNote.source,
+            author: formattedNote.author,
+            timestamp: formattedNote.timestamp
+          });
+        });
+        console.log('Sent note request via nodeMessageService');
+      } catch (error) {
+        console.error('Error sending note via nodeMessageService:', error);
+      }
+    }
+    
+    // 3. Fallback method: window.postMessage
+    try {
+      // Format 1: Node message format
+      window.postMessage({
+        type: 'node_message',
+        eventType: 'request',
+        senderId: id,
+        receiverId: connectedNoteIds.length > 0 ? connectedNoteIds[0] : null,
+        content: noteContent,
+        metadata: {
+          type: 'addNote',
+          noteId: noteId,
+          timestamp: formattedNote.timestamp,
+          source: formattedNote.source,
+          author: formattedNote.author
+        }
+      }, '*');
+      
+      // Format 2: Action-based format
+      window.postMessage({
+        action: 'addNote',
+        senderId: id,
+        targetId: connectedNoteIds.length > 0 ? connectedNoteIds[0] : null,
+        content: noteContent,
+        noteId: noteId,
+        timestamp: formattedNote.timestamp,
+        source: formattedNote.source,
+        author: formattedNote.author
+      }, '*');
+      
+      console.log('Sent note request via window.postMessage');
+    } catch (error) {
+      console.error('Error sending note via window.postMessage:', error);
+    }
+    
+    // 4. Broadcast to all nodes (in case target ID is wrong)
+    try {
+      messageBus.emit('broadcast', {
+        type: 'request',
+        senderId: id,
+        content: noteContent,
+        metadata: {
+          type: 'addNote',
+          noteId: noteId,
+          timestamp: formattedNote.timestamp,
+          source: formattedNote.source,
+          author: formattedNote.author
+        }
+      });
+      console.log('Broadcast note request to all nodes');
+    } catch (error) {
+      console.error('Error broadcasting note request:', error);
+    }
+    
+    // Show success feedback
+    setValidationMessage({
+      type: 'success',
+      message: 'Note sent to connected notes nodes',
+      timeout: 3000
+    });
+    
+    // Save to localStorage as backup
+    try {
+      const existingNotes = JSON.parse(localStorage.getItem(`takenNotes-${id}`) || '[]');
+      localStorage.setItem(`takenNotes-${id}`, JSON.stringify([...existingNotes, formattedNote]));
+      console.log('Saved note to localStorage as backup');
+    } catch (error) {
+      console.error('Error saving note to localStorage:', error);
+    }
+  };
+
+  // Add auto-note taking effect
+  useEffect(() => {
+    // Skip if auto-note taking is disabled
+    if (!autoTakeNotes) {
+      console.log('ChatNode: Auto-note taking is disabled');
+      return;
+    }
+    
+    // Skip if no messages or no notes node connected
+    if (!messages.length) {
+      console.log('ChatNode: No messages to take notes from');
+      return;
+    }
+    
+    // Check if we have a connected notes node
+    if (connectedNoteIds.length === 0 && !hasNotesNode) {
+      console.log('ChatNode: No notes nodes connected for auto-note taking');
+      setValidationMessage({
+        type: 'warning',
+        message: 'Auto-note taking enabled but no notes nodes connected. Create a Notes node and connect it.',
+        timeout: 5000
+      });
+      return;
+    }
+    
+    console.log('ChatNode: Checking for new messages to auto-take notes');
+    
+    // Find the most recent assistant message that we haven't taken a note for
+    const lastAssistantMsg = [...messages].reverse().find(msg => 
+      msg.role === 'assistant' && 
+      !msg.noteTaken
+    );
+    
+    if (lastAssistantMsg) {
+      console.log('ChatNode: Found assistant message to take note from:', lastAssistantMsg.id);
+      
+      // Mark this message as having had a note taken
+      const updatedMessages = messages.map(msg => 
+        msg.id === lastAssistantMsg.id 
+          ? { ...msg, noteTaken: true } 
+          : msg
+      );
+      
+      // Update messages in state
+      setMessages(updatedMessages);
+      
+      // Also update node data for persistence
+      const updatedData = {
+        ...safeData,
+        messages: updatedMessages
+      };
+      updateNode(id, updatedData);
+      
+      // Take the note with special formatting for auto-notes
+      // Use the same handleTakeNote function for consistency
+      console.log('ChatNode: Taking auto-note from message:', lastAssistantMsg.content);
+      handleTakeNote(lastAssistantMsg.content.substring(0, 2000)); // Limit length for safety
+      
+      console.log('ChatNode: Auto-note taken successfully');
+    } else {
+      console.log('ChatNode: No new assistant messages to take notes from');
+    }
+  }, [autoTakeNotes, messages, hasNotesNode, connectedNoteIds]);
 
   // Initialize state from data
   useEffect(() => {
@@ -566,6 +779,108 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
       });
     }
   }, [safeData]);
+
+  // Check for existing connections directly on mount
+  useEffect(() => {
+    console.log('ChatNode: Checking for existing connections on mount');
+    
+    const checkExistingEdges = () => {
+      try {
+        // Get edges from ReactFlow
+        const edges = reactFlow.getEdges();
+        console.log('ChatNode: All edges on mount:', edges);
+        
+        // Find edges connected to this node
+        const connectedEdges = edges.filter(
+          edge => edge.source === id || edge.target === id
+        );
+        console.log('ChatNode: Edges connected to this node on mount:', connectedEdges);
+        
+        // Find connected notes nodes
+        const notesNodeIds = [];
+        
+        for (const edge of connectedEdges) {
+          const otherId = edge.source === id ? edge.target : edge.source;
+          const otherNode = reactFlow.getNode(otherId);
+          
+          if (otherNode && otherNode.type === 'notes') {
+            console.log('ChatNode: Found connected notes node on mount:', otherNode.id);
+            notesNodeIds.push(otherNode.id);
+          }
+        }
+        
+        // Update state if notes nodes found
+        if (notesNodeIds.length > 0) {
+          console.log('ChatNode: Setting connected notes nodes on mount:', notesNodeIds);
+          setHasNotesNode(true);
+          setConnectedNoteIds(notesNodeIds);
+          
+          // Also emit direct connection events to each notes node to ensure they know about us
+          notesNodeIds.forEach(noteId => {
+            console.log('ChatNode: Emitting connection to notes node on mount:', noteId);
+            
+            // First connection notification
+            messageBus.emit('connect', {
+              senderId: id,
+              receiverId: noteId,
+              type: 'connect',
+              content: 'Chat node connected',
+              metadata: {
+                source: id,
+                target: noteId,
+                sourceType: 'chat',
+                targetType: 'notes'
+              }
+            });
+            
+            // Also send a ping to test the connection is working
+            messageBus.emit('request', {
+              senderId: id,
+              receiverId: noteId,
+              type: 'request',
+              content: 'Ping from ChatNode',
+              metadata: {
+                type: 'ping',
+                source: 'chat',
+                timestamp: Date.now()
+              }
+            });
+            
+            // And try window.postMessage as a backup channel
+            try {
+              window.postMessage({
+                type: 'node_message',
+                eventType: 'connect',
+                senderId: id,
+                receiverId: noteId,
+                content: 'Chat node connected via window.postMessage',
+                metadata: {
+                  source: id,
+                  target: noteId,
+                  sourceType: 'chat',
+                  targetType: 'notes'
+                }
+              }, '*');
+            } catch (err) {
+              console.error('ChatNode: Error sending connection via postMessage:', err);
+            }
+          });
+        }
+      } catch (err) {
+        console.error('ChatNode: Error checking connections on mount:', err);
+      }
+    };
+    
+    // Check edges immediately
+    checkExistingEdges();
+    
+    // Also set a timeout to check again after a short delay (in case ReactFlow is still initializing)
+    const timer = setTimeout(checkExistingEdges, 1000);
+    
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [id, reactFlow]);
 
   return (
     <ChatNodeErrorBoundary>
@@ -637,11 +952,33 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
               </Tooltip>
             </Box>
             <Box sx={{ display: 'flex', gap: 1 }}>
-              {hasConnectedNotesNode && (
-                <Tooltip title="Note Taking Enabled">
-                  <NoteIcon fontSize="small" color="primary" />
-                </Tooltip>
-              )}
+              {hasNotesNode || connectedNoteIds.length > 0 ? (
+                <>
+                  <Tooltip title={`Notes Connected (${connectedNoteIds.length})`}>
+                    <IconButton
+                      size="small"
+                      color="primary"
+                      onClick={() => console.log('Connected note IDs:', connectedNoteIds)}
+                    >
+                      <NoteIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                  <Tooltip title={autoTakeNotes ? "Disable Auto Note Taking" : "Enable Auto Note Taking"}>
+                    <IconButton
+                      size="small"
+                      onClick={() => {
+                        console.log('Toggle auto note taking. Current state:', autoTakeNotes);
+                        console.log('Has notes node:', hasNotesNode);
+                        console.log('Connected note IDs:', connectedNoteIds);
+                        setAutoTakeNotes(!autoTakeNotes);
+                      }}
+                      color={autoTakeNotes ? 'secondary' : 'primary'}
+                    >
+                      <AutoNoteIcon fontSize="small" />
+                    </IconButton>
+                  </Tooltip>
+                </>
+              ) : null}
               {hasConnectedUrlNode && (
                 <Tooltip title="URL Processing Enabled">
                   <LanguageIcon fontSize="small" color="primary" />
@@ -688,14 +1025,14 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                     <Box 
                       className="message-actions"
                       sx={{ 
-                        opacity: 0,
+                        opacity: { xs: 1, sm: 0.7 },  // Always visible on mobile, slightly visible on desktop
                         transition: 'opacity 0.2s',
                         ml: 1,
                         display: 'flex',
                         gap: 0.5
                       }}
                     >
-                      <Tooltip title="Copy message">
+                      <Tooltip title="Copy to clipboard">
                         <IconButton
                           size="small"
                           onClick={() => {
@@ -705,16 +1042,14 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                           <ContentCopyIcon fontSize="small" />
                         </IconButton>
                       </Tooltip>
-                      {hasConnectedNotesNode && (
-                        <Tooltip title="Take note">
-                          <IconButton
-                            size="small"
-                            onClick={() => handleTakeNote(message.content)}
-                          >
-                            <NoteIcon fontSize="small" />
-                          </IconButton>
-                        </Tooltip>
-                      )}
+                      <Tooltip title="Take note">
+                        <IconButton
+                          size="small"
+                          onClick={() => handleTakeNote(message.content)}
+                        >
+                          <NoteIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
                     </Box>
                   </Box>
                 </Paper>

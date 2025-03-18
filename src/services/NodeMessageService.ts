@@ -1,4 +1,4 @@
-import { messageBus } from './MessageBus';
+import { messageBus, EventType } from './MessageBus';
 
 export type NodeMessageType = 
   | 'note_draft'    // When a note is drafted and needs review
@@ -26,7 +26,7 @@ class NodeMessageService {
     this.subscribers = new Map();
 
     // Subscribe to messageBus events
-    messageBus.subscribe((event) => {
+    messageBus.subscribe(['node_message'], (event: any) => {
       if (event.type === 'node_message') {
         this.handleNodeMessage(event.detail as NodeMessage);
       }
@@ -82,7 +82,7 @@ class NodeMessageService {
   }
 
   public sendMessage(message: NodeMessage) {
-    messageBus.emit('node_message', {
+    messageBus.emit('message' as EventType, {
       ...message,
       metadata: {
         ...message.metadata,
@@ -118,7 +118,7 @@ class NodeMessageService {
     });
   }
 
-  public sendNoteSave(senderId: string, receiverId: string, content: string) {
+  public sendNoteSave(senderId: string, receiverId: string, content: string, metadata?: any) {
     console.log('NodeMessageService: Sending note save:', { senderId, receiverId, content });
     this.sendMessage({
       senderId,
@@ -126,7 +126,37 @@ class NodeMessageService {
       type: 'note_save',
       content,
       metadata: {
-        timestamp: Date.now()
+        timestamp: Date.now(),
+        ...metadata
+      }
+    });
+  }
+
+  public sendNoteRequest(senderId: string, receiverId: string, content: string, metadata?: any) {
+    console.log('NodeMessageService: Sending note request:', { senderId, receiverId, content, metadata });
+    messageBus.emit('request' as EventType, {
+      senderId,
+      receiverId,
+      type: 'request',
+      content,
+      metadata: {
+        type: 'addNote',
+        timestamp: Date.now(),
+        ...metadata
+      }
+    });
+  }
+
+  public sendNoteConfirmation(senderId: string, receiverId: string, content: string, metadata?: any) {
+    console.log('NodeMessageService: Sending note confirmation:', { senderId, receiverId, content, metadata });
+    messageBus.emit('update' as EventType, {
+      senderId,
+      receiverId,
+      type: 'note_save',
+      content: 'Note added successfully',
+      metadata: {
+        timestamp: Date.now(),
+        ...metadata
       }
     });
   }
