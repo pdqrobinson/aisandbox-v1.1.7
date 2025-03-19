@@ -1039,7 +1039,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
             sx={{
               flex: 1,
               overflow: 'auto',
-              bgcolor: 'background.default',
+              bgcolor: 'grey.900',
               borderRadius: 0,
             }}
           >
@@ -1051,19 +1051,19 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   sx={{
                     p: 2,
                     mb: 2,
-                    bgcolor: message.role === 'user' ? 'grey.100' : 'rgba(240, 247, 255, 0.8)',
+                    bgcolor: message.role === 'user' ? 'grey.800' : 'grey.900',
                     border: '1px solid',
-                    borderColor: message.role === 'user' ? 'grey.300' : 'rgba(187, 222, 251, 0.5)',
+                    borderColor: message.role === 'user' ? 'grey.700' : 'grey.800',
                     borderRadius: 2,
                     position: 'relative',
                     // Special styling for context notifications
                     ...(message.isContextOnly && {
-                      bgcolor: 'rgba(232, 245, 255, 0.7)',
-                      borderColor: 'rgba(144, 202, 249, 0.5)',
+                      bgcolor: 'rgba(30, 60, 90, 0.8)',
+                      borderColor: 'rgba(100, 150, 200, 0.3)',
                       borderStyle: 'dashed',
                       py: 1,
                       px: 2,
-                      color: 'primary.dark',
+                      color: 'rgba(180, 220, 255, 0.9)',
                       fontSize: '0.9rem',
                     }),
                   }}
@@ -1078,7 +1078,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                             whiteSpace: 'pre-wrap',
                             wordBreak: 'break-word',
                           pr: 4,
-                          color: message.role === 'user' ? 'text.primary' : 'text.primary',
+                          color: 'common.white',
                           fontWeight: message.role === 'user' ? 'medium' : 'normal',
                         }}
                         >
@@ -1103,6 +1103,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                               onClick={() => {
                                 navigator.clipboard.writeText(message.content);
                               }}
+                              sx={{ color: 'rgba(255, 255, 255, 0.7)' }}
                         >
                           <ContentCopyIcon fontSize="small" />
                         </IconButton>
@@ -1112,6 +1113,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                               <IconButton
                                 size="small"
                                 onClick={() => handleTakeNote(message.content)}
+                                sx={{ color: 'rgba(255, 255, 255, 0.7)' }}
                               >
                                 <NoteIcon fontSize="small" />
                               </IconButton>
@@ -1129,6 +1131,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                           width: '100%',
                           fontStyle: 'italic',
                           fontSize: '0.85rem',
+                          color: 'rgba(180, 220, 255, 0.9)',
                         }}
                       >
                         {message.content}
