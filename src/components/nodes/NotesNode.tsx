@@ -804,6 +804,9 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         '&:hover': {
           boxShadow: '0 2px 4px rgba(0,0,0,0.12)',
         },
+        '&:hover .note-action-buttons': {
+          opacity: 1, // Always show buttons on hover
+        }
       }}
     >
       {/* Note Header with metadata */}
@@ -813,7 +816,8 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         alignItems: 'center',
         mb: 0.75, 
         borderBottom: '1px solid rgba(0,0,0,0.05)',
-        pb: 0.75
+        pb: 0.75,
+        pr: 5 // Make space for the action buttons
       }}>
         <Typography
           variant="caption"
@@ -851,7 +855,8 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
           wordBreak: 'break-word',
           pt: 0.5,
           color: 'text.primary',
-          lineHeight: 1.4
+          lineHeight: 1.4,
+          pr: 5 // Make space for the action buttons
         }}
       >
         {note.content}
@@ -859,30 +864,32 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
       
       {/* Action Buttons */}
       <Box
+        className="note-action-buttons"
         sx={{
           position: 'absolute',
           top: 4,
           right: 4,
-          opacity: 0,
+          opacity: { xs: 0.8, sm: 0 }, // More visible on mobile by default
           transition: 'opacity 0.2s',
           display: 'flex',
-          gap: '2px',
-          '&:hover': {
-            opacity: 1,
-          },
-          '.MuiBox-root:hover &': {
-            opacity: 0.7,
-          }
+          gap: '4px',
+          zIndex: 10, // Ensure buttons are above other content
+          backgroundColor: 'rgba(255,255,255,0.7)', // Semi-transparent background for better visibility
+          borderRadius: '4px',
+          padding: '2px',
         }}
       >
         {/* Toggle AI Context Button */}
         <Tooltip title={note.inContext ? "Remove from AI context" : "Add to AI context"}>
           <IconButton
             size="small"
-            onClick={() => handleToggleContext(note.id, note.content)}
+            onClick={(e) => {
+              e.stopPropagation(); // Prevent event bubbling
+              handleToggleContext(note.id, note.content);
+            }}
             disabled={connectedNodes.size === 0}
             sx={{ 
-              padding: '2px',
+              padding: '6px',  // Increase padding for larger click area
               color: note.inContext 
                 ? 'primary.main' 
                 : connectedNodes.size > 0 ? 'text.secondary' : 'text.disabled',
@@ -905,9 +912,12 @@ export const NotesNode: React.FC<NodeProps<NotesNodeData>> = ({ id, data = {}, s
         {/* Delete Button */}
         <IconButton
           size="small"
-          onClick={() => onDelete(note.id)}
+          onClick={(e) => {
+            e.stopPropagation(); // Prevent event bubbling
+            onDelete(note.id);
+          }}
           sx={{ 
-            padding: '2px',
+            padding: '6px',  // Increase padding for larger click area
             color: 'text.disabled',
             '&:hover': {
               color: 'error.main',

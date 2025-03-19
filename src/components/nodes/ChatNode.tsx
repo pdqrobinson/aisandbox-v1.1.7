@@ -430,8 +430,8 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
       setMessages(updatedMessages);
       
       // Update node data with new messages
-      updateNode(id, {
-        ...safeData,
+    updateNode(id, {
+      ...safeData,
         messages: updatedMessages
       });
 
@@ -483,8 +483,8 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
           case 'connect':
             if (message.metadata?.target === id) {
               console.log('Node connected:', message.senderId, message.metadata); // Debug log
-              setConnectedNodes(prev => {
-                const updated = new Map(prev);
+    setConnectedNodes(prev => {
+      const updated = new Map(prev);
                 const nodeType = message.metadata.type;
                 const capabilities = nodeCapabilityService.getCapabilities(message.senderId) || [];
                 console.log('Node capabilities:', capabilities); // Debug log
@@ -492,18 +492,18 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   type: nodeType,
                   capabilities: capabilities
                 });
-                return updated;
-              });
+      return updated;
+    });
             }
             break;
           case 'disconnect':
             if (message.metadata?.target === id) {
               console.log('Node disconnected:', message.senderId); // Debug log
-              setConnectedNodes(prev => {
-                const updated = new Map(prev);
+      setConnectedNodes(prev => {
+        const updated = new Map(prev);
                 updated.delete(message.senderId);
-                return updated;
-              });
+        return updated;
+      });
             }
             break;
         }
@@ -577,11 +577,11 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
       // IMPORTANT: This matches EXACTLY what the NotesNode expects in handleNoteRequest
       messageBus.emit('request', {
         eventType: 'request',
-        senderId: id,
+          senderId: id,
         receiverId: noteNodeId,
         type: 'request',
         content: noteContent, // Direct string content
-        metadata: {
+          metadata: {
           type: 'addNote', // This is the critical field NotesNode checks for
           noteId: noteId,
           source: id,
@@ -657,7 +657,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     // Check if we have a connected notes node
     if (connectedNoteIds.length === 0 && !hasNotesNode) {
       console.log('ChatNode: No notes nodes connected for auto-note taking');
-      setValidationMessage({
+        setValidationMessage({
         type: 'warning',
         message: 'Auto-note taking enabled but no notes nodes connected. Create a Notes node and connect it.',
         timeout: 5000
@@ -737,7 +737,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     const edges = reactFlow.getEdges();
     const connectedEdges = edges.filter(edge => edge.source === id || edge.target === id);
     
-    // Find connected notes nodes
+      // Find connected notes nodes
     const notesNodeIds = connectedEdges.map(edge => {
       const otherId = edge.source === id ? edge.target : edge.source;
       const otherNode = reactFlow.getNode(otherId);
@@ -817,8 +817,8 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
     setAutoTakeNotes(newAutoTakeNotes);
     
     // Persist the auto-take-notes setting
-    updateNode(id, {
-      ...safeData,
+      updateNode(id, {
+        ...safeData,
       autoTakeNotes: newAutoTakeNotes
     });
     
@@ -965,65 +965,65 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
           >
             <Box sx={{ display: 'flex', gap: 1 }}>
               <Tooltip title="Settings">
-                <IconButton
-                  size="small"
+              <IconButton
+                size="small"
                   onClick={handleSettingsOpen}
                   color={validationMessage ? (validationMessage.type === 'error' ? 'error' : 'primary') : 'primary'}
                 >
                   <SettingsIcon fontSize="small" />
-                </IconButton>
+              </IconButton>
               </Tooltip>
               
               <Tooltip title={connectedNodes.size === 0 ? "No nodes connected" : "Check System Status"}>
                 <span>
-                  <IconButton
-                    size="small"
+                <IconButton
+                  size="small"
                     onClick={handleCheckStatus}
                     disabled={connectedNodes.size === 0}
                   >
                     <HubIcon fontSize="small" />
-                  </IconButton>
+                </IconButton>
                 </span>
               </Tooltip>
               
               <Tooltip title="Disconnect All Nodes">
                 <span>
-                  <IconButton
-                    size="small"
+              <IconButton
+                size="small"
                     onClick={handleDisconnectAll}
                     disabled={connectedNodes.size === 0}
                     color="error"
                   >
                     <LinkOffIcon fontSize="small" />
-                  </IconButton>
+              </IconButton>
                 </span>
               </Tooltip>
               
               <Tooltip title="Reset Chat">
                 <span>
-                  <IconButton
-                    size="small"
+              <IconButton
+                size="small"
                     onClick={handleResetChat}
                     disabled={messages.length === 0}
-                  >
+              >
                     <RestartIcon fontSize="small" />
-                  </IconButton>
+              </IconButton>
                 </span>
               </Tooltip>
 
               {/* Auto Notes Button */}
               {(hasNotesNode || connectedNoteIds.length > 0) && (
                 <Tooltip title={autoTakeNotes ? "Disable Auto Note Taking" : "Enable Auto Note Taking"}>
-                  <IconButton
-                    size="small"
+              <IconButton
+                size="small"
                     onClick={toggleAutoTakeNotes}
                     color={autoTakeNotes ? "secondary" : "default"}
                   >
                     <AutoNoteIcon fontSize="small" />
-                  </IconButton>
+              </IconButton>
                 </Tooltip>
-              )}
-            </Box>
+            )}
+          </Box>
 
             <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
               {hasConnectedUrlNode && (
@@ -1051,19 +1051,19 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   sx={{
                     p: 2,
                     mb: 2,
-                    bgcolor: message.role === 'user' ? 'grey.100' : 'white',
+                    bgcolor: message.role === 'user' ? 'grey.100' : 'rgba(240, 247, 255, 0.8)',
                     border: '1px solid',
-                    borderColor: message.role === 'user' ? 'grey.300' : 'grey.200',
+                    borderColor: message.role === 'user' ? 'grey.300' : 'rgba(187, 222, 251, 0.5)',
                     borderRadius: 2,
                     position: 'relative',
                     // Special styling for context notifications
                     ...(message.isContextOnly && {
-                      bgcolor: 'info.lightest',
-                      borderColor: 'info.light',
+                      bgcolor: 'rgba(232, 245, 255, 0.7)',
+                      borderColor: 'rgba(144, 202, 249, 0.5)',
                       borderStyle: 'dashed',
                       py: 1,
                       px: 2,
-                      color: 'info.dark',
+                      color: 'primary.dark',
                       fontSize: '0.9rem',
                     }),
                   }}
@@ -1072,13 +1072,15 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                     {!message.isContextOnly ? (
                       // Regular message content
                       <>
-                        <Typography
+                  <Typography
                           variant="body2"
-                          sx={{
+                        sx={{
                             whiteSpace: 'pre-wrap',
                             wordBreak: 'break-word',
-                            pr: 4,
-                          }}
+                          pr: 4,
+                          color: message.role === 'user' ? 'text.primary' : 'text.primary',
+                          fontWeight: message.role === 'user' ? 'medium' : 'normal',
+                        }}
                         >
                           {message.content}
                         </Typography>
@@ -1089,18 +1091,21 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                             transition: 'opacity 0.2s',
                             ml: 1,
                             display: 'flex',
-                            gap: 0.5
+                            gap: 0.5,
+                            '&:hover': {
+                              opacity: 1
+                            }
                           }}
                         >
                           <Tooltip title="Copy to clipboard">
-                            <IconButton
-                              size="small"
+                        <IconButton
+                          size="small"
                               onClick={() => {
                                 navigator.clipboard.writeText(message.content);
                               }}
-                            >
-                              <ContentCopyIcon fontSize="small" />
-                            </IconButton>
+                        >
+                          <ContentCopyIcon fontSize="small" />
+                        </IconButton>
                           </Tooltip>
                           {(hasNotesNode || connectedNoteIds.length > 0) && (
                             <Tooltip title="Take note">
@@ -1111,8 +1116,8 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                                 <NoteIcon fontSize="small" />
                               </IconButton>
                             </Tooltip>
-                          )}
-                        </Box>
+                    )}
+                  </Box>
                       </>
                     ) : (
                       // Context notification message (no actions)
@@ -1167,7 +1172,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
               <span>
                 <Button
                   variant="contained"
-                  onClick={handleSendMessage}
+              onClick={handleSendMessage}
                   disabled={!localApiKey || !input.trim() || isProcessing}
                   endIcon={<SendIcon />}
                 >
@@ -1175,7 +1180,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                 </Button>
               </span>
             </Tooltip>
-          </Box>
+        </Box>
 
           {/* Settings Dialog */}
           <Dialog open={settingsOpen} onClose={handleSettingsClose}>
@@ -1183,7 +1188,7 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
             <DialogContent>
               <Box sx={{ mt: 2 }}>
                 <TextField
-                  fullWidth
+          fullWidth
                   label="API Key"
                   type="password"
                   value={localApiKey}
@@ -1195,136 +1200,136 @@ export const ChatNode: React.FC<NodeProps<ChatNodeData>> = ({ id, data = {}, sel
                   helperText={validationMessage?.message}
                   sx={{ mb: 2 }}
                 />
-                <FormControl fullWidth>
-                  <Button
-                    variant="outlined"
-                    onClick={() => setModelSelectOpen(true)}
-                    sx={{ height: '56px', justifyContent: 'space-between', px: 2 }}
-                    endIcon={<SettingsIcon />}
-                  >
-                    <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', flex: 1 }}>
-                      <Typography variant="body2" color="text.secondary">
-                        Current Model
-                      </Typography>
-                      <Typography variant="body1">
+              <FormControl fullWidth>
+                <Button
+                  variant="outlined"
+                  onClick={() => setModelSelectOpen(true)}
+                  sx={{ height: '56px', justifyContent: 'space-between', px: 2 }}
+                  endIcon={<SettingsIcon />}
+                >
+                  <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', flex: 1 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      Current Model
+                    </Typography>
+                    <Typography variant="body1">
                         {MODEL_OPTIONS.find(p => p.provider === localSettings.provider)?.label} - {localSettings.model}
-                      </Typography>
-                    </Box>
-                  </Button>
-                </FormControl>
+                    </Typography>
+                  </Box>
+                </Button>
+              </FormControl>
 
-                <Box>
-                  <Typography gutterBottom>Temperature: {localSettings.temperature}</Typography>
-                  <Slider
-                    value={localSettings.temperature}
-                    onChange={(_, value) => setLocalSettings({ ...localSettings, temperature: value as number })}
-                    min={0}
-                    max={2}
-                    step={0.1}
-                  />
-                </Box>
-
-                <TextField
-                  fullWidth
-                  type="number"
-                  label="Max Tokens"
-                  value={localSettings.maxTokens}
-                  onChange={(e) => setLocalSettings({ ...localSettings, maxTokens: parseInt(e.target.value) })}
-                  InputProps={{
-                    inputProps: { min: 1, max: 4096 }
-                  }}
+              <Box>
+                <Typography gutterBottom>Temperature: {localSettings.temperature}</Typography>
+                <Slider
+                  value={localSettings.temperature}
+                  onChange={(_, value) => setLocalSettings({ ...localSettings, temperature: value as number })}
+                  min={0}
+                  max={2}
+                  step={0.1}
                 />
+              </Box>
 
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={4}
-                  label="System Prompt"
+              <TextField
+                fullWidth
+                type="number"
+                label="Max Tokens"
+                value={localSettings.maxTokens}
+                onChange={(e) => setLocalSettings({ ...localSettings, maxTokens: parseInt(e.target.value) })}
+                InputProps={{
+                    inputProps: { min: 1, max: 4096 }
+                }}
+              />
+
+              <TextField
+                fullWidth
+                multiline
+                rows={4}
+                label="System Prompt"
                   value={localSettings.systemPrompt}
                   onChange={(e) => setLocalSettings({ ...localSettings, systemPrompt: e.target.value })}
                   placeholder="Enter a system prompt..."
-                />
+              />
 
-                <TextField
-                  fullWidth
-                  multiline
-                  rows={4}
-                  label="Environment Prompt"
+              <TextField
+                fullWidth
+                multiline
+                rows={4}
+                label="Environment Prompt"
                   value={localSettings.environmentPrompt}
                   onChange={(e) => setLocalSettings({ ...localSettings, environmentPrompt: e.target.value })}
                   placeholder="Enter environment context..."
-                />
-              </Box>
-            </DialogContent>
-            <DialogActions>
+              />
+            </Box>
+          </DialogContent>
+          <DialogActions>
               <Button onClick={handleSettingsClose}>Cancel</Button>
-              <Button 
+            <Button 
                 onClick={handleSaveSettings}
-                variant="contained"
-                disabled={isValidatingKey || !localApiKey.trim()}
-              >
-                {isValidatingKey ? 'Validating...' : 'Save'}
-              </Button>
-            </DialogActions>
-          </Dialog>
+              variant="contained" 
+              disabled={isValidatingKey || !localApiKey.trim()}
+            >
+              {isValidatingKey ? 'Validating...' : 'Save'}
+            </Button>
+          </DialogActions>
+        </Dialog>
 
           {/* Model Selection Dialog */}
-          <Dialog
-            open={modelSelectOpen}
-            onClose={() => setModelSelectOpen(false)}
-            maxWidth="sm"
-            fullWidth
-          >
-            <DialogTitle>Select Model</DialogTitle>
-            <DialogContent>
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
-                {MODEL_OPTIONS.map((provider) => (
-                  <Paper
-                    key={provider.provider}
-                    sx={{
-                      p: 2,
-                      border: '1px solid',
-                      borderColor: 'divider',
-                      borderRadius: 1,
-                    }}
-                  >
-                    <Typography variant="h6" gutterBottom>
-                      {provider.label}
-                    </Typography>
-                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-                      {provider.models.map((model) => (
-                        <Button
-                          key={model.value}
-                          variant={
-                            localSettings.provider === provider.provider &&
-                            localSettings.model === model.value
-                              ? 'contained'
-                              : 'outlined'
-                          }
-                          onClick={() => {
+        <Dialog
+          open={modelSelectOpen}
+          onClose={() => setModelSelectOpen(false)}
+          maxWidth="sm"
+          fullWidth
+        >
+          <DialogTitle>Select Model</DialogTitle>
+          <DialogContent>
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+              {MODEL_OPTIONS.map((provider) => (
+                <Paper
+                  key={provider.provider}
+                  sx={{
+                    p: 2,
+                    border: '1px solid',
+                    borderColor: 'divider',
+                    borderRadius: 1,
+                  }}
+                >
+                  <Typography variant="h6" gutterBottom>
+                    {provider.label}
+                  </Typography>
+                  <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+                    {provider.models.map((model) => (
+                      <Button
+                        key={model.value}
+                        variant={
+                          localSettings.provider === provider.provider &&
+                          localSettings.model === model.value
+                            ? 'contained'
+                            : 'outlined'
+                        }
+                        onClick={() => {
                             setLocalSettings({
-                              ...localSettings,
+                            ...localSettings,
                               provider: provider.provider,
                               model: model.value,
                             });
-                            setModelSelectOpen(false);
-                          }}
-                          sx={{ justifyContent: 'flex-start', py: 1 }}
-                        >
-                          {model.label}
-                        </Button>
-                      ))}
-                    </Box>
-                  </Paper>
-                ))}
-              </Box>
-            </DialogContent>
-            <DialogActions>
-              <Button onClick={() => setModelSelectOpen(false)}>
-                Cancel
-              </Button>
-            </DialogActions>
-          </Dialog>
+                          setModelSelectOpen(false);
+                        }}
+                        sx={{ justifyContent: 'flex-start', py: 1 }}
+                      >
+                        {model.label}
+                      </Button>
+                    ))}
+                  </Box>
+                </Paper>
+              ))}
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setModelSelectOpen(false)}>
+              Cancel
+            </Button>
+          </DialogActions>
+        </Dialog>
         </Box>
       </BaseNode>
     </ChatNodeErrorBoundary>
