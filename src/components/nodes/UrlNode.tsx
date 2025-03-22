@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect } from 'react';
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import { NodeProps } from 'reactflow';
 import {
   Box,
@@ -8,407 +8,246 @@ import {
   Paper,
   Link,
   CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import {
-  Edit as EditIcon,
-  Check as CheckIcon,
   Link as LinkIcon,
   Refresh as RefreshIcon,
-  LinkOff as LinkOffIcon,
+  Edit as EditIcon,
+  Check as CheckIcon,
+  ContentCopy as CopyIcon,
 } from '@mui/icons-material';
 import { BaseNode } from './BaseNode';
 import { UrlNodeData } from '../../types/nodes';
 import { useCanvasStore } from '../../store/canvasStore';
-import { messageBus } from '../../services/MessageBus';
 import { NodeCommunicationService } from '../../services/NodeCommunicationService';
-import { nodeCapabilityService } from '../../services/NodeCapabilityService';
-import { UrlFetchService } from '../../services/UrlFetchService';
+import { urlFetchService, UrlMetadata } from '../../services/UrlFetchService';
 
-export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({
-  id,
-  data,
-  selected,
-}) => {
-  const [isEditingUrl, setIsEditingUrl] = useState(false);
-  const [isEditingTitle, setIsEditingTitle] = useState(false);
-  const [isEditingDescription, setIsEditingDescription] = useState(false);
-  const [tempUrl, setTempUrl] = useState(data.url || '');
-  const [tempTitle, setTempTitle] = useState(data.title || '');
-  const [tempDescription, setTempDescription] = useState(data.description || '');
+export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({ id, data = {}, selected }) => {
+  const { updateNode } = useCanvasStore();
+  const [isEditingUrl, setIsEditingUrl] = useState(!data.url);
+  const [urlInput, setUrlInput] = useState(data.url || '');
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [connectedNodes, setConnectedNodes] = useState<Set<string>>(new Set());
-  const { updateNode } = useCanvasStore();
+  
   const nodeCommunicationService = React.useMemo(() => NodeCommunicationService.getInstance(), []);
-
-  // Initialize node capabilities and communication
-  useEffect(() => {
-    // Register node capabilities
-    nodeCapabilityService.registerCapabilities(id, [{
-      type: 'urlNode',
-      metadata: {
-        canFetch: true,
-        hasContent: true,
-        isEditable: true
-      }
-    }]);
-
-    // Subscribe to events
-    const unsubscribe = nodeCommunicationService.subscribeToEvents(
-      id,
-      ['connect', 'disconnect', 'request'],
-      (message) => {
-        console.log('UrlNode received message:', message);
-        
-        switch (message.eventType) {
-          case 'connect':
-            if (message.metadata?.target === id) {
-              console.log('UrlNode: Handling connection from:', message.senderId);
-              setConnectedNodes(prev => {
-                const updated = new Set(prev);
-                updated.add(message.senderId);
-                return updated;
-              });
-              
-              // Send capabilities back to the connecting node
-              messageBus.emit('connect', {
-                senderId: id,
-                receiverId: message.senderId,
-                content: 'Connection accepted',
-                type: 'connection',
-                metadata: {
-                  type: 'urlNode',
-                  capabilities: nodeCapabilityService.getCapabilities(id),
-                  source: id,
-                  target: message.senderId,
-                  contentStatus: data.url ? 'has_content' : 'empty'
-                }
-              });
-
-              // Send current content to the connecting node
-              if (data.url) {
-                console.log('UrlNode: Sending content update to:', message.senderId, data);
-                messageBus.emit('update', {
-                  senderId: id,
-                  receiverId: message.senderId,
-                  type: 'content',
-                  content: {
-                    url: data.url || null,
-                    title: data.title || null,
-                    description: data.description || null,
-                    content: data.content || null,
-                    thumbnail: data.thumbnail || null,
-                    lastFetched: data.lastFetched || null,
-                    hasContent: Boolean(data.url && (data.title || data.content)),
-                    isLoading: isLoading
-                  },
-                  metadata: {
-                    type: 'urlNode',
-                    timestamp: Date.now(),
-                    contentStatus: data.url ? (isLoading ? 'loading' : 'has_content') : 'empty'
-                  }
-                });
-              }
-            }
-            break;
-          case 'disconnect':
-            if (message.metadata?.target === id) {
-              setConnectedNodes(prev => {
-                const updated = new Set(prev);
-                updated.delete(message.senderId);
-                return updated;
-              });
-            }
-            break;
-          case 'request':
-            if (message.metadata?.type === 'content' && data.url) {
-              console.log('UrlNode: Sending content update on request to:', message.senderId, data);
-              messageBus.emit('update', {
-                senderId: id,
-                receiverId: message.senderId,
-                type: 'content',
-                content: {
-                  url: data.url || null,
-                  title: data.title || null,
-                  description: data.description || null,
-                  content: data.content || null,
-                  thumbnail: data.thumbnail || null,
-                  lastFetched: data.lastFetched || null,
-                  hasContent: Boolean(data.url && (data.title || data.content)),
-                  isLoading: isLoading
-                },
-                metadata: {
-                  type: 'urlNode',
-                  timestamp: Date.now(),
-                  contentStatus: data.url ? (isLoading ? 'loading' : 'has_content') : 'empty'
-                }
-              });
-            }
-            break;
-        }
-      }
-    );
-
-    return () => {
-      unsubscribe();
-      nodeCapabilityService.unregisterNode(id);
-    };
-  }, [id, data, nodeCommunicationService, isLoading]);
-
-  // Add handleDisconnectAll function
-  const handleDisconnectAll = useCallback(() => {
-    Array.from(connectedNodes).forEach(nodeId => {
-      messageBus.emit('disconnect', {
-        senderId: id,
-        receiverId: nodeId,
-        type: 'disconnect',
-        metadata: {
-          type: 'urlNode',
-          source: id,
-          target: nodeId
-        }
-      });
-    });
-
-    setConnectedNodes(new Set());
-  }, [id, connectedNodes]);
-
-  // Function to fetch and process URL content
-  const fetchUrlContent = useCallback(async (url: string) => {
-    setIsLoading(true);
-    setError(null);
-
-    // Validate URL format
-    try {
-      new URL(url); // This will throw if URL is invalid
-    } catch (error) {
-      setError('Invalid URL format. Please enter a valid URL starting with http:// or https://');
-      setIsLoading(false);
-      return;
-    }
-
-    // Emit loading state
-    messageBus.emit('update', {
-      senderId: id,
-      type: 'content',
-      content: {
-        url: url,
-        title: data.title || null,
-        description: data.description || null,
-        content: data.content || null,
-        thumbnail: data.thumbnail || null,
-        lastFetched: data.lastFetched || null,
-        hasContent: false,
-        isLoading: true
-      },
-      metadata: {
-        type: 'urlNode',
-        timestamp: Date.now(),
-        contentStatus: 'loading'
-      }
-    });
-
-    try {
-      console.log('Fetching URL content for:', url);
-      const content = await UrlFetchService.fetchUrlContent(url);
-      console.log('Received content:', content);
-      
-      // Update node data
-      const updatedData = {
-        ...data,
-        url,
-        title: content.title || null,
-        description: content.description || null,
-        thumbnail: content.thumbnail || null,
-        content: content.content || null,
-        lastFetched: new Date().toISOString()
-      };
-      
-      updateNode(id, updatedData);
-
-      // Emit content update event with complete state
-      messageBus.emit('update', {
-        senderId: id,
-        type: 'content',
-        content: {
-          url: updatedData.url,
-          title: updatedData.title,
-          description: updatedData.description,
-          content: updatedData.content,
-          thumbnail: updatedData.thumbnail,
-          lastFetched: updatedData.lastFetched,
-          hasContent: Boolean(updatedData.url && updatedData.title),
-          isLoading: false
-        },
-        metadata: {
-          type: 'urlNode',
-          timestamp: Date.now(),
-          contentStatus: 'has_content'
-        }
-      });
-
-    } catch (error) {
-      console.error('Error fetching URL:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Failed to fetch URL content';
-      setError(errorMessage);
-      
-      // Emit error state
-      messageBus.emit('update', {
-        senderId: id,
-        type: 'content',
-        content: {
-          url: url,
-          title: null,
-          description: null,
-          content: null,
-          thumbnail: null,
-          lastFetched: null,
-          hasContent: false,
-          isLoading: false,
-          error: errorMessage
-        },
-        metadata: {
-          type: 'urlNode',
-          timestamp: Date.now(),
-          contentStatus: 'error'
-        }
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [id, data, updateNode]);
-
-  // Fetch content when URL is submitted
+  
+  // Handle URL submission
   const handleSubmitUrl = useCallback(async () => {
-    if (!tempUrl.trim()) {
+    if (!urlInput.trim()) {
       setError('Please enter a URL');
       return;
     }
-
-    // Normalize URL
-    let normalizedUrl = tempUrl.trim();
-    if (!/^https?:\/\//i.test(normalizedUrl)) {
-      normalizedUrl = `https://${normalizedUrl}`;
-    }
-
-    setIsEditingUrl(false);
-    await fetchUrlContent(normalizedUrl);
-  }, [tempUrl, fetchUrlContent]);
-
-  // Handle refresh button click
-  const handleRefresh = useCallback(() => {
-    if (data.url) {
-      fetchUrlContent(data.url);
-    }
-  }, [data.url, fetchUrlContent]);
-
-  const handleTitleSubmit = useCallback(() => {
-    if (tempTitle.trim()) {
+    
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      // Fetch URL metadata
+      const metadata = await urlFetchService.fetchUrl(urlInput.trim());
+      
+      // Update node data
       updateNode(id, {
         ...data,
-        title: tempTitle.trim(),
+        url: metadata.url,
+        title: metadata.title,
+        description: metadata.description,
+        thumbnail: metadata.thumbnail,
+        content: metadata.content,
+        lastFetched: metadata.lastFetched,
       });
+      
+      // Exit edit mode
+      setIsEditingUrl(false);
+      
+      // Notify connected nodes about the new content
+      connectedNodes.forEach(nodeId => {
+        nodeCommunicationService.sendMessage('update', {
+          senderId: id,
+          receiverId: nodeId,
+          content: `${metadata.title}\n\n${metadata.description || ''}`,
+          type: 'content',
+          metadata: {
+            type: 'url',
+            url: metadata.url,
+            title: metadata.title,
+            description: metadata.description,
+            source: id,
+          }
+        });
+      });
+    } catch (err) {
+      console.error('Error fetching URL:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch URL');
+    } finally {
+      setIsLoading(false);
     }
-    setIsEditingTitle(false);
-  }, [id, data, tempTitle, updateNode]);
-
-  const handleDescriptionSubmit = useCallback(() => {
-    updateNode(id, {
-      ...data,
-      description: tempDescription.trim(),
-    });
-    setIsEditingDescription(false);
-  }, [id, data, tempDescription, updateNode]);
-
-  const handleKeyPress = useCallback(
-    (event: React.KeyboardEvent, submitFn: () => void) => {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        submitFn();
-      }
-    },
-    []
-  );
-
-  // Initial fetch if URL exists
+  }, [urlInput, id, data, updateNode, connectedNodes, nodeCommunicationService]);
+  
+  // Handle URL refresh
+  const handleRefresh = useCallback(() => {
+    if (!data.url) return;
+    
+    setIsLoading(true);
+    setError(null);
+    
+    urlFetchService.fetchUrl(data.url, true)
+      .then(metadata => {
+        // Update node data
+        updateNode(id, {
+          ...data,
+          title: metadata.title,
+          description: metadata.description,
+          thumbnail: metadata.thumbnail,
+          content: metadata.content,
+          lastFetched: metadata.lastFetched,
+        });
+        
+        // Notify connected nodes about the updated content
+        connectedNodes.forEach(nodeId => {
+          nodeCommunicationService.sendMessage('update', {
+            senderId: id,
+            receiverId: nodeId,
+            content: `${metadata.title}\n\n${metadata.description || ''}`,
+            type: 'content',
+            metadata: {
+              type: 'url',
+              url: metadata.url,
+              title: metadata.title,
+              description: metadata.description,
+              source: id,
+            }
+          });
+        });
+      })
+      .catch(err => {
+        console.error('Error refreshing URL:', err);
+        setError(err instanceof Error ? err.message : 'Failed to refresh URL');
+      })
+      .finally(() => {
+        setIsLoading(false);
+      });
+  }, [data, id, updateNode, connectedNodes, nodeCommunicationService]);
+  
+  // Handle key press in URL input
+  const handleKeyPress = useCallback((event: React.KeyboardEvent) => {
+    if (event.key === 'Enter') {
+      handleSubmitUrl();
+    }
+  }, [handleSubmitUrl]);
+  
+  // Copy content to clipboard
+  const handleCopyContent = useCallback(() => {
+    if (!data.content) return;
+    
+    navigator.clipboard.writeText(data.content)
+      .then(() => {
+        console.log('Content copied to clipboard');
+      })
+      .catch(err => {
+        console.error('Failed to copy content:', err);
+      });
+  }, [data.content]);
+  
+  // Set up event listeners for node connections
   useEffect(() => {
-    if (data.url && !data.content && !isLoading) {
-      fetchUrlContent(data.url);
-    }
-  }, [data.url, data.content, fetchUrlContent, isLoading]);
-
+    const unsubscribe = nodeCommunicationService.subscribeToEvents(
+      id,
+      ['connect', 'disconnect', 'update'],
+      (message) => {
+        console.log('UrlNode: Received message:', message);
+        
+        if (message.eventType === 'connect' && message.senderId !== id) {
+          // Add to connected nodes
+          setConnectedNodes(prev => {
+            const updated = new Set(prev);
+            updated.add(message.senderId);
+            return updated;
+          });
+          
+          // Send current content to the newly connected node
+          if (data.url && data.title) {
+            nodeCommunicationService.sendMessage('update', {
+              senderId: id,
+              receiverId: message.senderId,
+              content: `${data.title}\n\n${data.description || ''}`,
+              type: 'content',
+              metadata: {
+                type: 'url',
+                url: data.url,
+                title: data.title,
+                description: data.description,
+                source: id,
+              }
+            });
+          }
+        } else if (message.eventType === 'disconnect') {
+          // Remove from connected nodes
+          setConnectedNodes(prev => {
+            const updated = new Set(prev);
+            updated.delete(message.senderId);
+            return updated;
+          });
+        }
+      }
+    );
+    
+    return () => {
+      unsubscribe();
+    };
+  }, [id, data, nodeCommunicationService, isLoading]);
+  
   return (
-    <BaseNode id={id} data={data} selected={selected}>
+    <BaseNode selected={selected} nodeId={id}>
       <Box
         sx={{
-          display: 'flex',
-          flexDirection: 'column',
-          width: '300px',
+          width: 320,
+          bgcolor: 'background.paper',
+          borderRadius: 1,
           overflow: 'hidden',
+          boxShadow: 1,
         }}
       >
-        <Paper
+        <Box
           sx={{
-            p: 2,
+            p: 1,
+            borderBottom: '1px solid',
+            borderColor: 'divider',
             display: 'flex',
-            flexDirection: 'column',
-            gap: 2,
-            bgcolor: 'background.default',
+            justifyContent: 'space-between',
+            alignItems: 'center',
           }}
         >
-          <Box
-            sx={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              mb: 1,
-            }}
-          >
-            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-              <Typography variant="subtitle2" color="text.secondary">
-                External Web Content {connectedNodes.size > 0 ? `(${connectedNodes.size} connected)` : ''}
-              </Typography>
-            </Box>
-            {connectedNodes.size > 0 && (
-              <IconButton
-                size="small"
-                onClick={handleDisconnectAll}
-                title="Disconnect All Nodes"
-                sx={{
-                  color: 'error.main',
-                  '&:hover': {
-                    backgroundColor: 'error.main',
-                    color: 'error.contrastText',
-                  },
-                }}
-              >
-                <LinkOffIcon fontSize="small" />
-              </IconButton>
+          <Typography variant="subtitle2">URL Node</Typography>
+          <Box sx={{ display: 'flex', gap: 0.5 }}>
+            {data.content && (
+              <Tooltip title="Copy Content">
+                <IconButton size="small" onClick={handleCopyContent}>
+                  <CopyIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
             )}
           </Box>
-
-          <Box
-            sx={{
-              display: 'flex',
-              flexDirection: 'column',
-              gap: 1,
-            }}
-          >
-            <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 'medium' }}>
-              Enter website URL to fetch external content
-            </Typography>
+        </Box>
+        <Paper sx={{ p: 1.5 }} elevation={0}>
+          <Box sx={{ mb: 1.5 }}>
             {isEditingUrl ? (
               <Box sx={{ display: 'flex', gap: 1 }}>
                 <TextField
                   fullWidth
                   size="small"
-                  value={tempUrl}
-                  onChange={(e) => setTempUrl(e.target.value)}
-                  onKeyPress={(e) => handleKeyPress(e, handleSubmitUrl)}
-                  placeholder="Enter any website URL..."
-                  autoFocus
+                  placeholder="Enter URL"
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  onKeyPress={handleKeyPress}
+                  disabled={isLoading}
+                  error={!!error}
+                  helperText={error}
                   InputProps={{
-                    startAdornment: <LinkIcon fontSize="small" sx={{ mr: 1, color: 'action.active' }} />,
+                    startAdornment: (
+                      <LinkIcon sx={{ mr: 1, color: 'action.active' }} />
+                    ),
                   }}
                 />
                 <IconButton
@@ -468,7 +307,6 @@ export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({
               </Box>
             )}
           </Box>
-
           {isLoading && (
             <Box sx={{ display: 'flex', justifyContent: 'center', py: 1 }}>
               <Typography variant="caption" color="text.secondary">
@@ -476,7 +314,6 @@ export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({
               </Typography>
             </Box>
           )}
-
           {data.url && !isLoading && (
             <Box sx={{ 
               borderLeft: '2px solid',
@@ -509,7 +346,6 @@ export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({
                   />
                 </Box>
               )}
-
               <Typography
                 variant="subtitle1"
                 sx={{
@@ -523,7 +359,6 @@ export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({
               >
                 {data.title || 'Untitled webpage'}
               </Typography>
-
               {data.description && (
                 <Typography
                   variant="body2"
@@ -539,15 +374,21 @@ export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({
                   {data.description}
                 </Typography>
               )}
-
               {data.lastFetched && (
                 <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mt: 1 }}>
                   Last fetched: {new Date(data.lastFetched).toLocaleString()}
                 </Typography>
               )}
+              
+              {connectedNodes.size > 0 && (
+                <Box sx={{ mt: 1, pt: 1, borderTop: '1px dashed', borderColor: 'divider' }}>
+                  <Typography variant="caption" color="text.secondary">
+                    Connected to {connectedNodes.size} node{connectedNodes.size !== 1 ? 's' : ''}
+                  </Typography>
+                </Box>
+              )}
             </Box>
           )}
-
           {error && (
             <Typography color="error" variant="caption" sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
               Error fetching external content: {error}
@@ -557,4 +398,4 @@ export const UrlNode: React.FC<NodeProps<UrlNodeData>> = ({
       </Box>
     </BaseNode>
   );
-}; 
+};

@@ -1,127 +1,52 @@
-import { Node, Edge } from 'reactflow';
-import { SharedMessage } from './sandbox';
+import { NotebookNodeData } from './nodes';
 
-export interface BaseNodeData {
-  label: string;
-  metadata?: NodeMetadata;
-}
-
-export interface Message {
-  id: string;
-  role: 'user' | 'assistant' | 'system';
-  content: string;
-  timestamp: number;
-}
-
-export interface ImageGenerationSettings {
-  provider: 'fal.ai';
-  model: string;
-  height: number;
-  width: number;
-  guidance_scale: number;
-  num_inference_steps: number;
-  negative_prompt?: string;
-  apiKey: string;
-}
-
-export interface ImageGenerationNodeData extends BaseNodeData {
-  settings?: ImageGenerationSettings;
-  images?: Array<{
-    id: string;
-    prompt: string;
-    imageUrl: string;
-    timestamp: number;
-    settings?: {
-      guidance_scale: number;
-      num_inference_steps: number;
-      negative_prompt?: string;
-    };
-  }>;
-}
-
-export interface ChatSettings {
-  provider: 'cohere';
-  model: string;
-  temperature: number;
-  maxTokens: number;
-  apiKey: string;
-  systemPrompt?: string;
-}
-
-export interface ChatNodeData extends BaseNodeData {
-  settings?: ChatSettings;
-  messages?: Message[];
-  environmentPrompt?: string;
-  autoTakeNotes?: boolean;
-  sentNotes?: Array<{
-    id: string;
-    content: string;
-    timestamp: number;
-    source: 'manual' | 'auto';
-    author: string;
-  }>;
-}
-
-export interface NotesNodeData extends BaseNodeData {
-  content?: string;
-}
-
-export interface ImageNodeData extends BaseNodeData {
-  imageUrl?: string;
-  caption?: string;
-  thumbnail?: string;
-}
-
-export interface DocumentNodeData extends BaseNodeData {
-  documentUrl?: string;
-  title?: string;
-}
-
-export interface UrlNodeData extends BaseNodeData {
+export interface UrlNodeData {
   url?: string;
   title?: string;
   description?: string;
   thumbnail?: string;
   content?: string;
-  lastFetched?: string;
+  lastFetched?: number;
 }
 
-export type NodeData = BaseNodeData & (
-  | ChatNodeData
-  | NotesNodeData
-  | ImageNodeData
-  | DocumentNodeData
-  | UrlNodeData
-  | ImageGenerationNodeData
-);
-
-export type CustomNode = Node<NodeData>;
-export type CustomEdge = Edge;
-
-export interface NodeConnection {
-  source: string;
-  target: string;
-  label?: string;
-  metadata?: Record<string, any>;
+export interface ChatNodeData {
+  messages: Array<{
+    role: string;
+    content: string;
+    id?: string;
+  }>;
+  settings: {
+    provider: 'cohere' | 'deepseek' | 'ollama';
+    model: string;
+    temperature: number;
+    maxTokens: number;
+    apiKey: string;
+    systemPrompt: string;
+    environmentPrompt: string;
+  };
+  autoTakeNotes?: boolean;
+  contextNotes?: string[];
 }
 
-export interface NodeEvent {
-  type: 'update' | 'request' | 'response' | 'action';
-  source: string;
-  target: string;
-  payload: any;
-  timestamp: number;
+export interface NotesNodeData {
+  notes?: Array<{
+    id: string;
+    content: string;
+    inContext?: boolean;
+    source?: string;
+  }>;
 }
 
-export interface NodeCapability {
-  type: string;
-  actions: string[];
-  description: string;
+export interface NotebookNodeData {
+  cells?: Array<{
+    id: string;
+    type: 'markdown' | 'code';
+    content: string;
+    output?: string;
+    state: 'idle' | 'running' | 'error' | 'success';
+    isCollapsed?: boolean;
+    error?: string;
+  }>;
+  ollamaModel?: string;
+  ollamaBaseUrl?: string;
 }
-
-export interface NodeMetadata {
-  type: string;
-  capabilities: NodeCapability[];
-  acceptedConnections: string[];
-  description: string;
-} 
